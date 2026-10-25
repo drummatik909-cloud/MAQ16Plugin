@@ -1,0 +1,40 @@
+name: Build MAQ16
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configurer les tests
+        run: cmake -B build
+
+      - name: Compiler les tests
+        run: cmake --build build --config Release
+
+      - name: Lancer les tests
+        run: ctest --test-dir build -C Release --output-on-failure
+
+      - name: Configurer le plugin
+        run: cmake -B build-plugin -DMAQ_BUILD_PLUGIN=ON
+
+      - name: Compiler le plugin
+        run: cmake --build build-plugin --config Release
+
+      - name: Récupérer le plugin
+        uses: actions/upload-artifact@v4
+        with:
+          name: MAQ16-${{ matrix.os }}
+          path: |
+            build-plugin/**/*.vst3
+            build-plugin/**/*.clap
+          if-no-files-found: warn
