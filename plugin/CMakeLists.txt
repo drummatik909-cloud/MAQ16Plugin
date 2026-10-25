@@ -14,6 +14,7 @@ juce_add_plugin(MAQ16
     PLUGIN_MANUFACTURER_CODE Maqp
     PLUGIN_CODE Maq1
     COMPANY_NAME "MAQ16 Plugin"
+    BUNDLE_ID com.maq16plugin.maq16
     PRODUCT_NAME "MAQ 16-3"
     FORMATS VST3
     IS_SYNTH FALSE
