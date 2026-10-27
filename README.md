@@ -1,60 +1,25 @@
-# Plugin MAQ 16/3 pour Bitwig – étape 1
+# Plugin MAQ 16/3 pour Bitwig – étape 2a (façade)
 
-Étape 1 du plan de construction de la V1 : moteur de séquence d'une unité, sortie MIDI, banque de 99 presets, réglage des dossiers d'import et d'export. Référence : la spécification technique (manuel officiel du MAQ16/3).
+Étape 1 (moteur MIDI d'une unité) validée dans Bitwig. Étape 2a : la façade.
 
-## État
+## Ce que contient l'étape 2a
 
-| Élément | État |
-|---|---|
-| Moteur d'une unité (3 rangées, 16 pas, horloge 24 par noire) | fait et testé (111 vérifications) |
-| Events : notes (nA, nr, PA, Pr), vélocité, CC libre et fixes, Pitch Bend, aftertouch, Program Change | fait et testé |
-| Modes : avant, arrière, pendule 1 et 2, aléatoire, One-Shot, OnE | fait et testé |
-| First/Last, Prescale g et n, mutes, pauses, Panic | fait et testé |
-| Banque de 99 presets en fichier `.maqbank` | fait et testé |
-| Dossiers d'import/export, option « garder le même dossier », mémorisation | fait et testé (logique) |
-| Squelette du plugin JUCE/CLAP (horloge de Bitwig vers MIDI) | écrit, **non compilé** |
-| Sélecteur de dossier à l'écran, façade, interface | étape 2 |
-| Cn1, Ad1, Poly-AT, durée de pas (t.4 à t.32), modes déclenchés par notes, chaînage Onr | à faire |
-| Test de lecture de la tonalité de Bitwig, glisser-déposer MIDI | à faire (fin d'étape 1 / étape 2) |
+- Fenêtre redimensionnable avec la photo de la façade Dark Edition (assets/facade.png).
+- 48 potards (glisser verticalement, molette, double-clic = retour à 0) reliés au moteur et automatisables dans Bitwig.
+- 48 LED de pas (pas courant en lecture, rangée choisie en demi-intensité, pas muets éteints).
+- Afficheur 3 chiffres à sept segments, 8 boutons de menu avec LED, encodeur DATA (glisser verticalement ou molette).
+- Menus : EVENT (PRESET dans EVENT = numéro du contrôleur libre), CHN, FIRST/LAST, PRESCALE, MODE, SINGLE STEP (mute d'un pas avec START/STOP en mode une rangée).
+- START/STOP : le transport est piloté par Bitwig ; le bouton ramène à l'affichage du tempo (hors SINGLE STEP). Sa LED indique la lecture.
+- État sauvegardé avec le projet Bitwig.
 
-## Dossiers d'import et d'export
+## Pas encore là (étape 2b)
 
-`src/presets/FolderSettings` gère cinq usages : import de presets, export de presets, sauvegarde de banque, sauvegarde SysEx, export MIDI.
+PRESET (99 slots, import/export, choix des dossiers : la logique existe déjà dans src/presets), interrupteur VAL/NOTE, mode apprentissage, gamme, capture, export MIDI par glisser-déposer. Aussi : Cn1, Ad1, Poly-AT, durée de pas, modes par notes, assignation des rangées de vélocité (pour l'instant une rangée de vélocité s'applique à toutes les autres).
 
-- Option **« Garder le même dossier »** (activée par défaut) : un seul dossier pour tous les usages, le choisir pour l'un le change pour tous.
-- Option désactivée : chaque usage mémorise son dossier.
-- Le choix est conservé entre les sessions dans `%APPDATA%\MAQ16Plugin\settings.ini` (Windows) ou `~/Library/Application Support/MAQ16Plugin/settings.ini` (macOS).
-- Dossier disparu : retour au dossier par défaut `Documents/MAQ16 Presets`, avec `usingFallback()` pour prévenir l'utilisateur.
-- Le sélecteur de fichiers (JUCE FileChooser) sera branché sur `folderFor()` et `setFolder()` à l'étape 2.
+## Fichiers à déposer dans GitHub
 
-## Compiler et tester le moteur
+Dépose le contenu du dossier (src, plugin, tests, assets, CMakeLists.txt, README.md) : les fichiers existants sont remplacés. Ne touche pas à `.github/workflows/build.yml`.
 
-Sans CMake : `g++ -std=c++17 -I src src/engine/Unit.cpp src/presets/Bank.cpp src/presets/FolderSettings.cpp tests/test_main.cpp -o maq_tests`
+## Tests du moteur
 
-Avec CMake (Windows, PowerShell) :
-
-```
-cmake -B build
-cmake --build build --config Release
-ctest --test-dir build -C Release --output-on-failure
-```
-
-## Compiler le plugin (non testé)
-
-Nécessite un accès réseau (téléchargement de JUCE et de clap-juce-extensions) :
-
-```
-cmake -B build-plugin -DMAQ_BUILD_PLUGIN=ON
-cmake --build build-plugin --config Release
-```
-
-Le CMake produit un VST3 et un CLAP (note effect). Si la configuration échoue, envoie-moi le message d'erreur : je corrigerai les noms d'options.
-
-## Hypothèses à valider sur la vraie MAQ
-
-- Potard stocké de 0 à 127 ; note = 36 + arrondi(potard × 12 × octaves / 127).
-- Pause PA/Pr : potard à 127 exactement.
-- Plateau central du Pitch Bend : ±3 autour de 64.
-- Notes relatives : référence 36 quand aucune note n'est reçue.
-- Rangées de vélocité jouées avant les rangées de notes à la même horloge.
-- Pendule 1 : 1 2 3 4 4 3 2 1 1 2… ; pendule 2 : 1 2 3 4 3 2 1 2…
+`g++ -std=c++17 -I src src/engine/Unit.cpp src/engine/Events.cpp src/presets/Bank.cpp src/presets/FolderSettings.cpp tests/test_main.cpp -o maq_tests`
