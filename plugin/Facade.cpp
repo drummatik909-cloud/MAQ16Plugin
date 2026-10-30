@@ -184,7 +184,7 @@ Facade::Facade(MaqProcessor& p) : proc_(p), apvts_(p.apvts) {
             auto k = std::make_unique<Slider>();
             k->setSliderStyle(Slider::RotaryVerticalDrag);
             k->setTextBoxStyle(Slider::NoTextBox, false, 0, 0);
-            k->setRotaryParameters(MathConstants<float>::pi * 1.25f, MathConstants<float>::pi * 2.75f, true);
+            k->setRotaryParameters(MathConstants<float>::pi * 1.2f, MathConstants<float>::pi * 2.8f, true);
             k->setMouseDragSensitivity(220);
             k->setLookAndFeel(&lnf_);
             const Point<int> centre(roundToInt(kKnobX0 + kKnobDX * static_cast<float>(s)), roundToInt(kKnobY[r]));
@@ -227,6 +227,13 @@ Facade::~Facade() {
 void Facade::paint(Graphics& g) {
     g.setImageResamplingQuality(Graphics::highResamplingQuality);
     g.drawImageAt(background_, 0, 0);
+
+        // La photo étiquette les rangées 2 et 2 : on remplace le deuxième « 2 » par « 3 »
+    g.setColour(Colour(0xff0d0d0d));
+    g.fillRect(793, 343, 12, 16);
+    g.setColour(Colours::white);
+    g.setFont(g.getCurrentFont().withHeight(18.0f).boldened());
+    g.drawText("3", Rectangle<int>(792, 341, 14, 19), Justification::centred, false);
 
     // Vitre de l'afficheur : on recouvre le « 300 » de la photo
     g.setColour(Colour(0xff4c4c4c));
