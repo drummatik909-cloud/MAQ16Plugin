@@ -18,6 +18,8 @@ static int g_fail = 0, g_checks = 0;
         if (!(cond)) { ++g_fail; std::printf("ECHEC %s:%d  %s\n", __FILE__, __LINE__, #cond); } \
     } while (0)
 
+static fs::path tempDir(const char* name);
+
 struct Ev { int tick; MidiMsg m; };
 
 static Unit makeUnit() {
@@ -254,6 +256,40 @@ static void testEventTable() {
     CHECK(std::string(modeLabel(0)) == "FOr" && std::string(modeLabel(2)) == "PE1" && std::string(modeLabel(7)) == "OnE");
 }
 
+
+static void testNotesAndPresetHelpers() {
+    // noms de notes, convention de Bitwig (60 = 3)
+    CHECK(noteName(60, false) == "C3" && noteName(36, false) == "C1" && noteName(61, false) == "C#3");
+    CHECK(noteName(69, false) == "A3" && noteName(0, false) == "C-2" && noteName(127, false) == "G8");
+    CHECK(noteName(60, true) == "Do3" && noteName(62, true) == "R\xC3\xA9" "3" && noteName(68, true) == "Sol#3");
+
+    EventConfig na1 = eventForIndex(2);    // nA1
+    EventConfig pa2 = eventForIndex(51);   // PA2
+    EventConfig nr1 = eventForIndex(7);    // nr1
+    EventConfig prA = eventForIndex(55);   // Pr1
+    CHECK(valueText(na1, 0, false, false) == "36" && valueText(na1, 127, false, false) == "48");
+    CHECK(valueText(na1, 0, true, false) == "C1" && valueText(na1, 127, true, false) == "C2");
+    CHECK(valueText(pa2, 127, true, false) == "---" && valueText(pa2, 126, true, false) != "---");
+    CHECK(valueText(nr1, 127, true, false) == "+12" && valueText(nr1, 127, false, false) == "12");
+    CHECK(valueText(prA, 127, true, true) == "---");
+    CHECK(valueText(eventForIndex(0), 50, true, false) == "---");
+    CHECK(valueText(eventForIndex(13), 77, true, false) == "77");  // contrôleur : toujours la valeur
+    CHECK(isAbsoluteNoteEvent(na1) && !isAbsoluteNoteEvent(nr1));
+
+    // la correspondance index <-> Event est exacte pour les 60 entrées
+    for (int i = 0; i < kEventCount; ++i) CHECK(eventIndexFor(eventForIndex(i)) == i);
+}
+
+static void testFolderUtf8() {
+    fs::path root = tempDir("maq_test_utf8");
+    fs::path d = root / "dossier";
+    fs::create_directories(d);
+    FolderSettings s(root);
+    s.setFolderUtf8(FolderPurpose::PresetExport, d.u8string());
+    CHECK(s.folderForUtf8(FolderPurpose::PresetImport) == d.u8string());  // « garder le même dossier » par défaut
+    CHECK(s.folderFor(FolderPurpose::PresetExport) == d);
+}
+
 static fs::path tempDir(const char* name) {
     fs::path d = fs::temp_directory_path() / name;
     std::error_code ec;
@@ -265,6 +301,7 @@ static fs::path tempDir(const char* name) {
 static void testBank() {
     Bank b;
     Preset& p = b.slot(42);
+    p.used = true;
     p.name = "Test preset  avec espaces";
     p.bpm = 133;
     p.rows[0].event.kind = EventKind::NoteAbsPause;
@@ -278,7 +315,9 @@ static void testBank() {
     Bank c;
     CHECK(c.deserialize(b.serialize()));
     const Preset& q = c.slot(42);
-    CHECK(q.name == p.name && q.bpm == 133);
+    CHECK(q.used && q.name == p.name && q.bpm == 133);
+    CHECK(!c.slot(41).used && !c.slot(43).used);
+    CHECK(b.serialize().find("slot 42\n") != std::string::npos && b.serialize().find("slot 41\n") == std::string::npos);
     CHECK(q.rows[0].event.kind == EventKind::NoteAbsPause && q.rows[0].event.octaves == 3);
     CHECK(q.rows[0].mode == PlayMode::Pendulum2 && q.rows[0].first == 2 && q.rows[0].last == 11);
     CHECK(q.rows[0].gate == 12 && q.rows[0].noteLen == 5 && q.rows[0].pot[7] == 99 && q.rows[0].mute[3]);
@@ -367,6 +406,8 @@ int main() {
     testBank();
     testFolderSettings();
     testEventTable();
+    testNotesAndPresetHelpers();
+    testFolderUtf8();
     std::printf("%d verifications, %d echec(s)\n", g_checks, g_fail);
     return g_fail == 0 ? 0 : 1;
 }

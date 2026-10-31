@@ -28,6 +28,7 @@ std::string Bank::serialize() const {
     o << "MAQBANK 1\n";
     for (int i = 0; i < kPresetSlots; ++i) {
         const Preset& p = slots_[i];
+        if (!p.used) continue;
         o << "slot " << (i + 1) << "\n";
         o << "name " << p.name << "\n";
         o << "bpm " << p.bpm << "\n";
@@ -72,6 +73,7 @@ bool Bank::deserialize(const std::string& text) {
             int n = 0; ls >> n;
             if (n < 1 || n > kPresetSlots) return false;
             cur = n - 1; curRow = -1;
+            fresh.slots_[cur].used = true;
         } else if (cur < 0) {
             continue;
         } else if (key == "name") {

@@ -4,13 +4,18 @@
 
 using namespace juce;
 
+namespace {
+int toInt(const std::atomic<float>* a) { return static_cast<int>(std::lround(a->load())); }
+}  // namespace
+
 MaqProcessor::MaqProcessor()
     : AudioProcessor(BusesProperties()),
       apvts(*this, nullptr, "MAQ16", createLayout()) {
     for (auto& s : uiStep) s.store(0);
+    folders.load(maq::FolderSettings::defaultSettingsFile());
 
     for (int r = 0; r < maq::kRows; ++r) {
-        auto& p = rp_[r];
+        auto& p = rp_[static_cast<size_t>(r)];
         p.event = apvts.getRawParameterValue(rowId("event", r));
         p.cc = apvts.getRawParameterValue(rowId("cc", r));
         p.chan = apvts.getRawParameterValue(rowId("chan", r));
@@ -20,14 +25,20 @@ MaqProcessor::MaqProcessor()
         p.noteLen = apvts.getRawParameterValue(rowId("notelen", r));
         p.mode = apvts.getRawParameterValue(rowId("mode", r));
         for (int s = 0; s < maq::kSteps; ++s) {
-            p.pot[s] = apvts.getRawParameterValue(potId(r, s));
-            p.mute[s] = apvts.getRawParameterValue(muteId(r, s));
+            p.pot[static_cast<size_t>(s)] = apvts.getRawParameterValue(potId(r, s));
+            p.mute[static_cast<size_t>(s)] = apvts.getRawParameterValue(muteId(r, s));
         }
     }
 }
 
 AudioProcessorValueTreeState::ParameterLayout MaqProcessor::createLayout() {
     AudioProcessorValueTreeState::ParameterLayout layout;
+
+    // Réglages globaux
+    layout.add(std::make_unique<AudioParameterBool>(ParameterID{"valnote", 1}, "Show note names", false));
+    layout.add(std::make_unique<AudioParameterBool>(ParameterID{"notefr", 1}, "Note names in French", true));
+    layout.add(std::make_unique<AudioParameterInt>(ParameterID{"preset", 1}, "Preset slot", 0, maq::kPresetSlots, 0));
+
     for (int r = 0; r < maq::kRows; ++r) {
         const String rn = "Row " + String(r + 1);
         // Valeurs par défaut du preset 0 du manuel : nA1, canaux 1/2/3, pas 1 à 16, g = 6, n = 1, Forward
@@ -50,25 +61,25 @@ AudioProcessorValueTreeState::ParameterLayout MaqProcessor::createLayout() {
 
 void MaqProcessor::syncEngineFromParams() {
     for (int r = 0; r < maq::kRows; ++r) {
-        const auto& p = rp_[r];
-        auto& cfg = unit_.rows[r];
+        const auto& p = rp_[static_cast<size_t>(r)];
+        auto& cfg = unit_.rows[static_cast<size_t>(r)];
 
-        maq::EventConfig e = maq::eventForIndex(static_cast<int>(std::lround(p.event->load())));
-        if (e.kind == maq::EventKind::FreeCC) e.ccNumber = static_cast<int>(std::lround(p.cc->load()));
+        maq::EventConfig e = maq::eventForIndex(toInt(p.event));
+        if (e.kind == maq::EventKind::FreeCC) e.ccNumber = toInt(p.cc);
         cfg.event = e;
 
-        cfg.channel = static_cast<int>(std::lround(p.chan->load()));
-        cfg.first = static_cast<int>(std::lround(p.first->load()));
-        cfg.last = static_cast<int>(std::lround(p.last->load()));
-        cfg.gate = static_cast<int>(std::lround(p.gate->load()));
-        cfg.noteLen = static_cast<int>(std::lround(p.noteLen->load()));
-        cfg.mode = static_cast<maq::PlayMode>(static_cast<int>(std::lround(p.mode->load())));
+        cfg.channel = toInt(p.chan);
+        cfg.first = toInt(p.first);
+        cfg.last = toInt(p.last);
+        cfg.gate = toInt(p.gate);
+        cfg.noteLen = toInt(p.noteLen);
+        cfg.mode = static_cast<maq::PlayMode>(toInt(p.mode));
         // Une rangée de vélocité s'applique à toutes les autres rangées (l'assignation fine viendra plus tard).
         cfg.velocityTargets = (e.kind == maq::EventKind::Velocity) ? (0x7 & ~(1 << r)) : 0;
 
         for (int s = 0; s < maq::kSteps; ++s) {
-            cfg.pot[s] = static_cast<int>(std::lround(p.pot[s]->load()));
-            cfg.mute[s] = p.mute[s]->load() > 0.5f;
+            cfg.pot[static_cast<size_t>(s)] = toInt(p.pot[static_cast<size_t>(s)]);
+            cfg.mute[static_cast<size_t>(s)] = p.mute[static_cast<size_t>(s)]->load() > 0.5f;
         }
     }
 }
@@ -151,20 +162,160 @@ void MaqProcessor::processBlock(AudioBuffer<float>& buffer, MidiBuffer& midi) {
     }
     expectedStart_ = endClock;
 
-    for (int r = 0; r < maq::kRows; ++r) uiStep[r].store(unit_.currentStep(r));
+    for (int r = 0; r < maq::kRows; ++r) uiStep[static_cast<size_t>(r)].store(unit_.currentStep(r));
 }
+
+// ------------------------------------------------------------------ Presets
+
+void MaqProcessor::setParamValue(const String& id, int value) {
+    if (auto* p = apvts.getParameter(id)) {
+        p->beginChangeGesture();
+        p->setValueNotifyingHost(p->convertTo0to1(static_cast<float>(value)));
+        p->endChangeGesture();
+    }
+}
+
+void MaqProcessor::storePreset(int slot) {
+    if (slot < 1 || slot > maq::kPresetSlots) return;
+
+    maq::Preset p;
+    {
+        const ScopedLock sl(bankLock_);
+        p = bank_.slot(slot);  // on garde le nom déjà donné
+    }
+
+    for (int r = 0; r < maq::kRows; ++r) {
+        const auto& src = rp_[static_cast<size_t>(r)];
+        auto& dst = p.rows[static_cast<size_t>(r)];
+
+        maq::EventConfig e = maq::eventForIndex(toInt(src.event));
+        if (e.kind == maq::EventKind::FreeCC) e.ccNumber = toInt(src.cc);
+        dst.event = e;
+        dst.channel = toInt(src.chan);
+        dst.first = toInt(src.first);
+        dst.last = toInt(src.last);
+        dst.gate = toInt(src.gate);
+        dst.noteLen = toInt(src.noteLen);
+        dst.mode = static_cast<maq::PlayMode>(toInt(src.mode));
+        for (int s = 0; s < maq::kSteps; ++s) {
+            dst.pot[static_cast<size_t>(s)] = toInt(src.pot[static_cast<size_t>(s)]);
+            dst.mute[static_cast<size_t>(s)] = src.mute[static_cast<size_t>(s)]->load() > 0.5f;
+        }
+    }
+    p.used = true;
+
+    const ScopedLock sl(bankLock_);
+    bank_.slot(slot) = p;
+}
+
+bool MaqProcessor::recallPreset(int slot) {
+    if (slot < 1 || slot > maq::kPresetSlots) return false;
+
+    maq::Preset p;
+    {
+        const ScopedLock sl(bankLock_);
+        if (!bank_.slot(slot).used) return false;
+        p = bank_.slot(slot);
+    }
+
+    for (int r = 0; r < maq::kRows; ++r) {
+        const auto& c = p.rows[static_cast<size_t>(r)];
+        setParamValue(rowId("event", r), maq::eventIndexFor(c.event));
+        if (c.event.kind == maq::EventKind::FreeCC) setParamValue(rowId("cc", r), c.event.ccNumber);
+        setParamValue(rowId("chan", r), c.channel);
+        setParamValue(rowId("first", r), c.first);
+        setParamValue(rowId("last", r), c.last);
+        setParamValue(rowId("gate", r), c.gate);
+        setParamValue(rowId("notelen", r), c.noteLen);
+        setParamValue(rowId("mode", r), static_cast<int>(c.mode));
+        for (int s = 0; s < maq::kSteps; ++s) {
+            setParamValue(potId(r, s), c.pot[static_cast<size_t>(s)]);
+            setParamValue(muteId(r, s), c.mute[static_cast<size_t>(s)] ? 1 : 0);
+        }
+    }
+    return true;
+}
+
+bool MaqProcessor::presetUsed(int slot) const {
+    if (slot < 1 || slot > maq::kPresetSlots) return false;
+    const ScopedLock sl(bankLock_);
+    return bank_.slot(slot).used;
+}
+
+String MaqProcessor::presetName(int slot) const {
+    if (slot < 1 || slot > maq::kPresetSlots) return {};
+    const ScopedLock sl(bankLock_);
+    return String::fromUTF8(bank_.slot(slot).name.c_str());
+}
+
+void MaqProcessor::setPresetName(int slot, const String& name) {
+    if (slot < 1 || slot > maq::kPresetSlots) return;
+    const ScopedLock sl(bankLock_);
+    bank_.slot(slot).name = name.toStdString();
+}
+
+int MaqProcessor::usedPresetCount() const {
+    const ScopedLock sl(bankLock_);
+    int n = 0;
+    for (int i = 1; i <= maq::kPresetSlots; ++i)
+        if (bank_.slot(i).used) ++n;
+    return n;
+}
+
+// ------------------------------------------------------------------ Banque et dossiers
+
+bool MaqProcessor::exportBank(const File& file) const {
+    std::string text;
+    {
+        const ScopedLock sl(bankLock_);
+        text = bank_.serialize();
+    }
+    file.getParentDirectory().createDirectory();
+    return file.replaceWithText(String::fromUTF8(text.c_str()));
+}
+
+bool MaqProcessor::importBank(const File& file) {
+    if (!file.existsAsFile()) return false;
+    maq::Bank imported;
+    if (!imported.deserialize(file.loadFileAsString().toStdString())) return false;
+    const ScopedLock sl(bankLock_);
+    bank_ = imported;
+    return true;
+}
+
+void MaqProcessor::saveFolderSettings() { folders.save(maq::FolderSettings::defaultSettingsFile()); }
+
+// ------------------------------------------------------------------ État du projet
 
 AudioProcessorEditor* MaqProcessor::createEditor() { return new MaqEditor(*this); }
 
 void MaqProcessor::getStateInformation(MemoryBlock& dest) {
     auto state = apvts.copyState();
-    if (auto xml = state.createXml()) copyXmlToBinary(*xml, dest);
+    if (auto xml = state.createXml()) {
+        std::string text;
+        {
+            const ScopedLock sl(bankLock_);
+            text = bank_.serialize();
+        }
+        xml->createNewChildElement("BANK")->addTextElement(String::fromUTF8(text.c_str()));
+        copyXmlToBinary(*xml, dest);
+    }
 }
 
 void MaqProcessor::setStateInformation(const void* data, int size) {
-    if (auto xml = getXmlFromBinary(data, size))
-        if (xml->hasTagName(apvts.state.getType()))
+    if (auto xml = getXmlFromBinary(data, size)) {
+        if (xml->hasTagName(apvts.state.getType())) {
+            if (auto* bankXml = xml->getChildByName("BANK")) {
+                maq::Bank restored;
+                if (restored.deserialize(bankXml->getAllSubText().toStdString())) {
+                    const ScopedLock sl(bankLock_);
+                    bank_ = restored;
+                }
+                xml->removeChildElement(bankXml, true);
+            }
             apvts.replaceState(ValueTree::fromXml(*xml));
+        }
+    }
 }
 
 AudioProcessor* JUCE_CALLTYPE createPluginFilter() { return new MaqProcessor(); }

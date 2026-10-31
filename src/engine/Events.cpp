@@ -53,4 +53,55 @@ const char* modeLabel(int mode) {
     return labels[mode];
 }
 
+int eventIndexFor(const EventConfig& e) {
+    const bool usesOctaves = e.kind == EventKind::NoteAbs || e.kind == EventKind::NoteRel ||
+                             e.kind == EventKind::NoteAbsPause || e.kind == EventKind::NoteRelPause;
+    for (int i = 0; i < kEventCount; ++i) {
+        const EventConfig a = eventForIndex(i);
+        if (a.kind != e.kind) continue;
+        if (usesOctaves && a.octaves != e.octaves) continue;
+        if (a.kind == EventKind::FixedCC && a.ccNumber != e.ccNumber) continue;
+        return i;
+    }
+    return 0;
+}
+
+bool isAbsoluteNoteEvent(const EventConfig& e) {
+    return e.kind == EventKind::NoteAbs || e.kind == EventKind::NoteAbsPause;
+}
+
+bool isPauseValue(const EventConfig& e, int pot) {
+    return (e.kind == EventKind::NoteAbsPause || e.kind == EventKind::NoteRelPause) && pot >= 127;
+}
+
+int displayValue(const EventConfig& e, int pot) {
+    switch (e.kind) {
+        case EventKind::NoteAbs:
+        case EventKind::NoteAbsPause: return noteFromPot(e.octaves, pot);
+        case EventKind::NoteRel:
+        case EventKind::NoteRelPause: return noteOffsetFromPot(e.octaves, pot);
+        case EventKind::PitchBend:
+        case EventKind::PitchBendPos:
+        case EventKind::PitchBendNeg: return pitchBendFromPot(e.kind, pot);
+        default: return std::max(0, std::min(127, pot));
+    }
+}
+
+std::string noteName(int midiNote, bool french) {
+    static const char* const en[12] = {"C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"};
+    static const char* const fr[12] = {"Do", "Do#", "R\xC3\xA9", "R\xC3\xA9#", "Mi", "Fa", "Fa#", "Sol", "Sol#", "La", "La#", "Si"};
+    const int n = std::max(0, std::min(127, midiNote));
+    return std::string(french ? fr[n % 12] : en[n % 12]) + std::to_string(n / 12 - 2);
+}
+
+std::string valueText(const EventConfig& e, int pot, bool noteMode, bool french) {
+    if (e.kind == EventKind::Off) return "---";
+    if (isPauseValue(e, pot)) return "---";
+    const int v = displayValue(e, pot);
+    if (noteMode && isAbsoluteNoteEvent(e)) return noteName(v, french);
+    if (noteMode && (e.kind == EventKind::NoteRel || e.kind == EventKind::NoteRelPause))
+        return "+" + std::to_string(v);
+    return std::to_string(v);
+}
+
 }  // namespace maq

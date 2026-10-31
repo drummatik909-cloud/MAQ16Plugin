@@ -1,5 +1,5 @@
 #pragma once
-// Étape 2a : paramètres automatisables (48 potards, 48 mutes, réglages de rangée) et façade.
+// Étape 2b, lot 1 : paramètres automatisables, presets (99 slots), banque, dossiers d'import/export.
 // À valider avec JUCE 8 : la compilation se fait sur GitHub.
 #include <juce_audio_processors/juce_audio_processors.h>
 #include <array>
@@ -7,6 +7,8 @@
 #include <vector>
 #include "engine/Events.h"
 #include "engine/Unit.h"
+#include "presets/Bank.h"
+#include "presets/FolderSettings.h"
 
 class MaqProcessor : public juce::AudioProcessor {
 public:
@@ -40,6 +42,23 @@ public:
     static juce::String potId(int row, int step) { return "pot_" + juce::String(row) + "_" + juce::String(step); }
     static juce::String muteId(int row, int step) { return "mute_" + juce::String(row) + "_" + juce::String(step); }
     static juce::String rowId(const juce::String& name, int row) { return name + "_" + juce::String(row); }
+    // Paramètres globaux : "valnote" (noms de notes), "notefr" (Do Ré Mi), "preset" (slot choisi, 0..99)
+
+    // ---- Presets (slots 1..99) ----
+    void storePreset(int slot);        // enregistre les réglages actuels dans le slot
+    bool recallPreset(int slot);       // charge le slot (faux s'il est vide)
+    bool presetUsed(int slot) const;
+    juce::String presetName(int slot) const;
+    void setPresetName(int slot, const juce::String& name);
+    int usedPresetCount() const;
+
+    // ---- Banque en fichier .maqbank ----
+    bool exportBank(const juce::File& file) const;
+    bool importBank(const juce::File& file);
+
+    // ---- Dossiers d'import / d'export (mémorisés entre les sessions) ----
+    maq::FolderSettings folders;
+    void saveFolderSettings();
 
     juce::AudioProcessorValueTreeState apvts;
 
@@ -52,6 +71,7 @@ private:
     static juce::AudioProcessorValueTreeState::ParameterLayout createLayout();
     void syncEngineFromParams();
     void emit(const std::vector<maq::MidiMsg>& msgs, int samplePos, juce::MidiBuffer& out);
+    void setParamValue(const juce::String& id, int value);
 
     struct RowParams {
         std::atomic<float>* event = nullptr;
@@ -66,6 +86,9 @@ private:
         std::array<std::atomic<float>*, maq::kSteps> mute{};
     };
     std::array<RowParams, maq::kRows> rp_;
+
+    mutable juce::CriticalSection bankLock_;
+    maq::Bank bank_;
 
     maq::Unit unit_;
     double sampleRate_ = 44100.0;

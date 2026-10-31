@@ -55,6 +55,12 @@ void FolderSettings::setFolder(FolderPurpose p, const fs::path& folder) {
     }
 }
 
+std::string FolderSettings::folderForUtf8(FolderPurpose p) const { return folderFor(p).u8string(); }
+
+void FolderSettings::setFolderUtf8(FolderPurpose p, const std::string& utf8Path) {
+    setFolder(p, fromUtf8(utf8Path));
+}
+
 bool FolderSettings::save(const fs::path& file) const {
     std::error_code ec;
     if (file.has_parent_path()) fs::create_directories(file.parent_path(), ec);

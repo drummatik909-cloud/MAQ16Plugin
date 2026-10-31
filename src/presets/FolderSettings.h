@@ -37,6 +37,10 @@ public:
     bool save(const std::filesystem::path& file) const;
     bool load(const std::filesystem::path& file);
 
+    // Versions en UTF-8 (std::string) pour le code du plugin
+    std::string folderForUtf8(FolderPurpose p) const;
+    void setFolderUtf8(FolderPurpose p, const std::string& utf8Path);
+
     const std::filesystem::path& defaultFolder() const { return default_; }
 
     // %APPDATA%\MAQ16Plugin\settings.ini (Windows), ~/Library/Application Support/MAQ16Plugin/ (macOS)

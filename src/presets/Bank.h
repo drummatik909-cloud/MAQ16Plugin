@@ -9,6 +9,7 @@ namespace maq {
 // Un preset d'unité (étape 1) : nom, tempo et les 3 rangées.
 // Les presets de configuration complète à 4 unités viendront à l'étape 3.
 struct Preset {
+    bool used = false;  // seul un slot utilisé est sauvegardé
     std::string name;
     int bpm = 120;
     std::array<RowConfig, kRows> rows;
