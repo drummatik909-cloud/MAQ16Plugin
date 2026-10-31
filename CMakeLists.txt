@@ -11,6 +11,8 @@ option(MAQ_BUILD_PLUGIN "Compiler le plugin JUCE/CLAP/VST3 (télécharge JUCE et
 add_library(maq_engine STATIC
     src/engine/Unit.cpp
     src/engine/Events.cpp
+    src/ui/Strings.cpp
+    src/ui/Preferences.cpp
     src/presets/Bank.cpp
     src/presets/FolderSettings.cpp)
 target_include_directories(maq_engine PUBLIC src)

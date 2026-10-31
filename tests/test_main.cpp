@@ -7,6 +7,8 @@
 #include "engine/Events.h"
 #include "presets/Bank.h"
 #include "presets/FolderSettings.h"
+#include "ui/Preferences.h"
+#include "ui/Strings.h"
 
 using namespace maq;
 namespace fs = std::filesystem;
@@ -290,6 +292,57 @@ static void testFolderUtf8() {
     CHECK(s.folderFor(FolderPurpose::PresetExport) == d);
 }
 
+
+static void testStringsAndHelp() {
+    for (int i = 0; i < static_cast<int>(Str::Count); ++i) {
+        const std::string f = tr(static_cast<Str>(i), Lang::French), e = tr(static_cast<Str>(i), Lang::English);
+        CHECK(!f.empty() && !e.empty());
+    }
+    CHECK(tr(Str::Store, Lang::French) == "Enregistrer" && tr(Str::Store, Lang::English) == "Store");
+    CHECK(fmt(Str::BankExported, Lang::English, "ma.maqbank", 7) == "Bank exported: ma.maqbank (7 presets)");
+    CHECK(fmt(Str::PresetStored, Lang::French, "", 12) == "Preset 12 enregistr\xC3\xA9");
+    CHECK(langFromCode("en") == Lang::English && langFromCode("fr") == Lang::French && langFromCode("xx") == Lang::French);
+    CHECK(std::string(langCode(Lang::English)) == "en");
+
+    // l'aide existe, diffère d'une langue à l'autre et ne contient aucun marqueur resté en place
+    auto good = [](const HelpContext& c) {
+        const std::string f = helpText(c, Lang::French), e = helpText(c, Lang::English);
+        return !f.empty() && !e.empty() && f != e && f.find('{') == std::string::npos && e.find('{') == std::string::npos;
+    };
+    HelpContext c;
+    for (HelpMenu m : {HelpMenu::None, HelpMenu::Channel, HelpMenu::SingleStep, HelpMenu::Preset}) {
+        c.menu = m;
+        for (bool flag : {false, true}) { c.singleRow = flag; c.store = flag; CHECK(good(c)); }
+    }
+    for (HelpMenu m : {HelpMenu::FirstLast, HelpMenu::Prescale}) {
+        c.menu = m;
+        for (bool flag : {false, true}) { c.second = flag; CHECK(good(c)); }
+    }
+    c.menu = HelpMenu::Event;
+    for (int i = 0; i < kEventCount; ++i) { c.eventIndex = i; CHECK(good(c)); }
+    c.ccEdit = true; CHECK(good(c)); c.ccEdit = false;
+    c.menu = HelpMenu::Mode;
+    for (int m = 0; m < kModeCount; ++m) { c.modeIndex = m; CHECK(good(c)); }
+    c.menu = HelpMenu::Event; c.eventIndex = 2;
+    CHECK(helpText(c, Lang::English).find("MIDI 36 to 48") != std::string::npos);
+    CHECK(helpText(c, Lang::French).find("Do1") != std::string::npos);
+}
+
+static void testPreferences() {
+    fs::path root = tempDir("maq_test_prefs");
+    Preferences p;
+    CHECK(p.language == Lang::French && p.manualPath.empty());   // défauts
+    p.language = Lang::English;
+    p.manualPath = "/chemin/vers/MAQ16-3 manuel.pdf";
+    fs::path file = root / "sous" / "preferences.ini";
+    CHECK(p.save(file));
+    Preferences q;
+    CHECK(q.load(file));
+    CHECK(q.language == Lang::English && q.manualPath == p.manualPath);
+    CHECK(!q.load(root / "absent.ini"));
+    CHECK(!Preferences::defaultFile().empty());
+}
+
 static fs::path tempDir(const char* name) {
     fs::path d = fs::temp_directory_path() / name;
     std::error_code ec;
@@ -408,6 +461,8 @@ int main() {
     testEventTable();
     testNotesAndPresetHelpers();
     testFolderUtf8();
+    testStringsAndHelp();
+    testPreferences();
     std::printf("%d verifications, %d echec(s)\n", g_checks, g_fail);
     return g_fail == 0 ? 0 : 1;
 }

@@ -13,6 +13,7 @@ MaqProcessor::MaqProcessor()
       apvts(*this, nullptr, "MAQ16", createLayout()) {
     for (auto& s : uiStep) s.store(0);
     folders.load(maq::FolderSettings::defaultSettingsFile());
+    prefs.load(maq::Preferences::defaultFile());
 
     for (int r = 0; r < maq::kRows; ++r) {
         auto& p = rp_[static_cast<size_t>(r)];
@@ -113,6 +114,12 @@ void MaqProcessor::emit(const std::vector<maq::MidiMsg>& msgs, int samplePos, Mi
 void MaqProcessor::processBlock(AudioBuffer<float>& buffer, MidiBuffer& midi) {
     midi.clear();  // plugin générateur : les notes entrantes ne sont pas transmises
     const int numSamples = buffer.getNumSamples();
+
+    if (panicRequested.exchange(false)) {  // bouton Panic : Note Off + All Notes Off immédiats
+        std::vector<maq::MidiMsg> panicMsgs;
+        unit_.panic(panicMsgs);
+        emit(panicMsgs, 0, midi);
+    }
 
     syncEngineFromParams();
 
@@ -284,6 +291,8 @@ bool MaqProcessor::importBank(const File& file) {
 }
 
 void MaqProcessor::saveFolderSettings() { folders.save(maq::FolderSettings::defaultSettingsFile()); }
+
+void MaqProcessor::savePreferences() { prefs.save(maq::Preferences::defaultFile()); }
 
 // ------------------------------------------------------------------ État du projet
 

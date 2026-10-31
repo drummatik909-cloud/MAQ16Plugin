@@ -117,6 +117,7 @@ std::string segNote(int midi) {
 }
 
 String fr(const char* utf8) { return String::fromUTF8(utf8); }
+String S(const std::string& utf8) { return String::fromUTF8(utf8.c_str()); }
 
 }  // namespace
 
@@ -572,28 +573,43 @@ void Facade::timerCallback() {
     }
 }
 
+maq::HelpContext Facade::helpContext() const {
+    maq::HelpContext c;
+    switch (menu_) {
+        case Menu::Event: c.menu = maq::HelpMenu::Event; break;
+        case Menu::Channel: c.menu = maq::HelpMenu::Channel; break;
+        case Menu::FirstLast: c.menu = maq::HelpMenu::FirstLast; break;
+        case Menu::Prescale: c.menu = maq::HelpMenu::Prescale; break;
+        case Menu::Mode: c.menu = maq::HelpMenu::Mode; break;
+        case Menu::SingleStep: c.menu = maq::HelpMenu::SingleStep; break;
+        case Menu::Preset: c.menu = maq::HelpMenu::Preset; break;
+        default: c.menu = maq::HelpMenu::None; break;
+    }
+    c.eventIndex = getInt(MaqProcessor::rowId("event", row_));
+    c.modeIndex = getInt(MaqProcessor::rowId("mode", row_));
+    c.second = sub_ >= 3;
+    c.ccEdit = ccEdit_;
+    c.store = storeMode_;
+    c.singleRow = singleRow_ >= 0;
+    return c;
+}
+
 // ---------------------------------------------------------------- Barre de contrôle
 
 ControlBar::ControlBar(MaqProcessor& p) : proc_(p) {
     lnf_.setColourScheme(LookAndFeel_V4::getMidnightColourScheme());
     setLookAndFeel(&lnf_);
 
-    notesBtn_.setButtonText("Notes");
-    frBtn_.setButtonText(fr("Do R\xC3\xA9 Mi"));
     prevBtn_.setButtonText("<");
     nextBtn_.setButtonText(">");
-    storeBtn_.setButtonText("Enregistrer");
-    recallBtn_.setButtonText("Rappeler");
-    importBtn_.setButtonText("Importer...");
-    exportBtn_.setButtonText("Exporter...");
-    importDirBtn_.setButtonText("Dossier import");
-    exportDirBtn_.setButtonText("Dossier export");
-    keepSameBtn_.setButtonText(fr("Garder le m\xC3\xAA" "me dossier"));
+    panicBtn_.setButtonText("Panic");
+    frBtn_.setButtonText(fr("Do R\xC3\xA9 Mi"));
 
     notesBtn_.setClickingTogglesState(true);
     frBtn_.setClickingTogglesState(true);
     notesBtn_.setColour(TextButton::buttonOnColourId, Colour(0xffb02a1a));
     frBtn_.setColour(TextButton::buttonOnColourId, Colour(0xffb02a1a));
+    panicBtn_.setColour(TextButton::buttonColourId, Colour(0xff7a1a12));
     if (auto* prm = proc_.apvts.getParameter("valnote"))
         notesAttach_ = std::make_unique<ButtonParameterAttachment>(*prm, notesBtn_);
     if (auto* prm = proc_.apvts.getParameter("notefr"))
@@ -604,6 +620,9 @@ ControlBar::ControlBar(MaqProcessor& p) : proc_(p) {
     presetLabel_.setJustificationType(Justification::centred);
     statusLabel_.setJustificationType(Justification::centredLeft);
     statusLabel_.setColour(Label::textColourId, Colours::lightgrey);
+    helpLabel_.setJustificationType(Justification::topLeft);
+    helpLabel_.setFont(helpLabel_.getFont().withHeight(14.0f));
+    helpLabel_.setColour(Label::textColourId, Colour(0xffd6d6d6));
     nameEditor_.setMultiLine(false);
     nameEditor_.setReturnKeyStartsNewLine(false);
 
@@ -613,40 +632,50 @@ ControlBar::ControlBar(MaqProcessor& p) : proc_(p) {
     nextBtn_.onClick = [this] { bumpPreset(+1); };
     storeBtn_.onClick = [this] {
         const int s = selectedSlot();
-        if (s < 1) { setStatus(fr("Choisis un slot de 1 \xC3\xA0 99")); return; }
+        if (s < 1) { setStatus(S(maq::tr(maq::Str::ChooseSlot, lang()))); return; }
         proc_.storePreset(s);
-        setStatus("Preset " + String(s) + fr(" enregistr\xC3\xA9"));
+        setStatus(S(maq::fmt(maq::Str::PresetStored, lang(), "", s)));
     };
     recallBtn_.onClick = [this] {
         const int s = selectedSlot();
-        if (s < 1) { setStatus(fr("Choisis un slot de 1 \xC3\xA0 99")); return; }
-        if (proc_.recallPreset(s)) setStatus("Preset " + String(s) + fr(" rappel\xC3\xA9"));
-        else setStatus("Preset " + String(s) + " : slot vide");
+        if (s < 1) { setStatus(S(maq::tr(maq::Str::ChooseSlot, lang()))); return; }
+        setStatus(S(maq::fmt(proc_.recallPreset(s) ? maq::Str::PresetRecalled : maq::Str::PresetEmpty, lang(), "", s)));
     };
     importBtn_.onClick = [this] { doImport(); };
     exportBtn_.onClick = [this] { doExport(); };
-    importDirBtn_.onClick = [this] { chooseFolder(maq::FolderPurpose::PresetImport, fr("Dossier d'import des presets")); };
-    exportDirBtn_.onClick = [this] { chooseFolder(maq::FolderPurpose::PresetExport, fr("Dossier d'export des presets")); };
+    importDirBtn_.onClick = [this] { chooseFolder(maq::FolderPurpose::PresetImport, S(maq::tr(maq::Str::ImportDirTitle, lang()))); };
+    exportDirBtn_.onClick = [this] { chooseFolder(maq::FolderPurpose::PresetExport, S(maq::tr(maq::Str::ExportDirTitle, lang()))); };
     keepSameBtn_.onClick = [this] {
         proc_.folders.setKeepSameFolder(keepSameBtn_.getToggleState());
         proc_.saveFolderSettings();
-        setStatus(keepSameBtn_.getToggleState() ? fr("Un seul dossier pour tous les usages")
-                                                : fr("Un dossier par usage"));
+        setStatus(S(maq::tr(keepSameBtn_.getToggleState() ? maq::Str::OneFolder : maq::Str::PerUseFolder, lang())));
     };
     nameEditor_.onTextChange = [this] {
         const int s = selectedSlot();
         if (s >= 1 && proc_.presetUsed(s)) proc_.setPresetName(s, nameEditor_.getText());
     };
+    panicBtn_.onClick = [this] {
+        proc_.requestPanic();
+        setStatus(S(maq::tr(maq::Str::PanicDone, lang())));
+    };
+    manualBtn_.onClick = [this] { showManualMenu(); };
+    langBtn_.onClick = [this] {
+        proc_.prefs.language = (lang() == maq::Lang::French) ? maq::Lang::English : maq::Lang::French;
+        proc_.savePreferences();
+        applyLanguage();
+    };
 
-    for (auto* b : {&notesBtn_, &frBtn_, &prevBtn_, &nextBtn_, &storeBtn_, &recallBtn_,
-                    &importBtn_, &exportBtn_, &importDirBtn_, &exportDirBtn_})
+    for (auto* b : {&notesBtn_, &frBtn_, &prevBtn_, &nextBtn_, &storeBtn_, &recallBtn_, &importBtn_, &exportBtn_,
+                    &importDirBtn_, &exportDirBtn_, &panicBtn_, &manualBtn_, &langBtn_})
         addAndMakeVisible(*b);
     addAndMakeVisible(keepSameBtn_);
     addAndMakeVisible(titleLabel_);
     addAndMakeVisible(presetLabel_);
     addAndMakeVisible(statusLabel_);
+    addAndMakeVisible(helpLabel_);
     addAndMakeVisible(nameEditor_);
 
+    applyLanguage();
     startTimerHz(8);
 }
 
@@ -655,28 +684,54 @@ ControlBar::~ControlBar() {
     setLookAndFeel(nullptr);
 }
 
+// Applique la langue choisie à tous les textes de la barre
+void ControlBar::applyLanguage() {
+    const maq::Lang l = lang();
+    notesBtn_.setButtonText(S(maq::tr(maq::Str::Notes, l)));
+    storeBtn_.setButtonText(S(maq::tr(maq::Str::Store, l)));
+    recallBtn_.setButtonText(S(maq::tr(maq::Str::Recall, l)));
+    importBtn_.setButtonText(S(maq::tr(maq::Str::Import, l)));
+    exportBtn_.setButtonText(S(maq::tr(maq::Str::Export, l)));
+    importDirBtn_.setButtonText(S(maq::tr(maq::Str::ImportDir, l)));
+    exportDirBtn_.setButtonText(S(maq::tr(maq::Str::ExportDir, l)));
+    keepSameBtn_.setButtonText(S(maq::tr(maq::Str::KeepSameFolder, l)));
+    manualBtn_.setButtonText(S(maq::tr(maq::Str::Manual, l)));
+    langBtn_.setButtonText(l == maq::Lang::French ? "FR" : "EN");
+    setStatus(String());
+    shownSlot_ = -1;       // force la mise à jour du champ de nom
+    shownHelp_ = String(); // et de l'aide
+}
+
 void ControlBar::paint(Graphics& g) {
     g.fillAll(Colour(0xff161616));
     g.setColour(Colour(0xff3a3a3a));
     g.drawHorizontalLine(0, 0.0f, static_cast<float>(getWidth()));
+    g.drawHorizontalLine(74, 20.0f, static_cast<float>(getWidth() - 20));
 }
 
 void ControlBar::resized() {
-    notesBtn_.setBounds(20, 10, 90, 30);
-    frBtn_.setBounds(118, 10, 100, 30);
-    titleLabel_.setBounds(236, 10, 76, 30);
-    prevBtn_.setBounds(318, 10, 32, 30);
-    presetLabel_.setBounds(354, 10, 56, 30);
-    nextBtn_.setBounds(414, 10, 32, 30);
-    nameEditor_.setBounds(458, 10, 224, 30);
-    storeBtn_.setBounds(694, 10, 100, 30);
-    recallBtn_.setBounds(800, 10, 90, 30);
-    importBtn_.setBounds(906, 10, 100, 30);
-    exportBtn_.setBounds(1012, 10, 100, 30);
-    importDirBtn_.setBounds(1124, 10, 110, 30);
-    exportDirBtn_.setBounds(1240, 10, 110, 30);
-    statusLabel_.setBounds(20, 44, 860, 26);
-    keepSameBtn_.setBounds(906, 44, 300, 26);
+    // Ligne 1 : noms de notes, presets, import/export, dossiers, Panic
+    notesBtn_.setBounds(20, 8, 80, 30);
+    frBtn_.setBounds(106, 8, 100, 30);
+    titleLabel_.setBounds(220, 8, 70, 30);
+    prevBtn_.setBounds(296, 8, 30, 30);
+    presetLabel_.setBounds(330, 8, 50, 30);
+    nextBtn_.setBounds(384, 8, 30, 30);
+    nameEditor_.setBounds(422, 8, 210, 30);
+    storeBtn_.setBounds(640, 8, 100, 30);
+    recallBtn_.setBounds(746, 8, 84, 30);
+    importBtn_.setBounds(840, 8, 90, 30);
+    exportBtn_.setBounds(936, 8, 90, 30);
+    importDirBtn_.setBounds(1036, 8, 112, 30);
+    exportDirBtn_.setBounds(1154, 8, 112, 30);
+    panicBtn_.setBounds(1274, 8, 76, 30);
+    // Ligne 2 : dossiers, message d'état, manuel, langue
+    keepSameBtn_.setBounds(20, 42, 270, 28);
+    statusLabel_.setBounds(300, 42, 830, 28);
+    manualBtn_.setBounds(1150, 42, 100, 28);
+    langBtn_.setBounds(1260, 42, 90, 28);
+    // Ligne 3 : aide contextuelle (deux lignes)
+    helpLabel_.setBounds(20, 76, 1330, 34);
 }
 
 int ControlBar::selectedSlot() const {
@@ -708,18 +763,27 @@ void ControlBar::timerCallback() {
         shownUsed_ = used;
         presetLabel_.setText(String(slot), dontSendNotification);
         nameEditor_.setEnabled(used);
-        nameEditor_.setTextToShowWhenEmpty(used ? "nom du preset" : "(slot vide)", Colours::grey);
+        nameEditor_.setTextToShowWhenEmpty(
+            S(maq::tr(used ? maq::Str::PresetName : maq::Str::SlotEmpty, lang())), Colours::grey);
         nameEditor_.setText(name, false);
         shownName_ = name;
     } else if (used && name != shownName_ && !nameEditor_.hasKeyboardFocus(true)) {
         nameEditor_.setText(name, false);
         shownName_ = name;
     }
+
+    if (helpSource_) {
+        const String help = S(maq::helpText(helpSource_(), lang()));
+        if (help != shownHelp_) {
+            shownHelp_ = help;
+            helpLabel_.setText(help, dontSendNotification);
+        }
+    }
 }
 
 void ControlBar::doExport() {
-    const File dir(fr(proc_.folders.folderForUtf8(maq::FolderPurpose::PresetExport).c_str()));
-    chooser_ = std::make_unique<FileChooser>(fr("Exporter la banque de presets"),
+    const File dir(S(proc_.folders.folderForUtf8(maq::FolderPurpose::PresetExport)));
+    chooser_ = std::make_unique<FileChooser>(S(maq::tr(maq::Str::ExportTitle, lang())),
                                              dir.getChildFile("MAQ16_banque.maqbank"), "*.maqbank");
     chooser_->launchAsync(FileBrowserComponent::saveMode | FileBrowserComponent::canSelectFiles |
                               FileBrowserComponent::warnAboutOverwriting,
@@ -731,17 +795,17 @@ void ControlBar::doExport() {
                                   proc_.folders.setFolderUtf8(maq::FolderPurpose::PresetExport,
                                                               f.getParentDirectory().getFullPathName().toRawUTF8());
                                   proc_.saveFolderSettings();
-                                  setStatus(fr("Banque export\xC3\xA9") + fr("e : ") + f.getFileName() + " (" +
-                                            String(proc_.usedPresetCount()) + " presets)");
+                                  setStatus(S(maq::fmt(maq::Str::BankExported, lang(), f.getFileName().toStdString(),
+                                                       proc_.usedPresetCount())));
                               } else {
-                                  setStatus(fr("\xC3\x89") + fr("chec de l'export"));
+                                  setStatus(S(maq::tr(maq::Str::ExportFailed, lang())));
                               }
                           });
 }
 
 void ControlBar::doImport() {
-    const File dir(fr(proc_.folders.folderForUtf8(maq::FolderPurpose::PresetImport).c_str()));
-    chooser_ = std::make_unique<FileChooser>(fr("Importer une banque de presets"), dir, "*.maqbank");
+    const File dir(S(proc_.folders.folderForUtf8(maq::FolderPurpose::PresetImport)));
+    chooser_ = std::make_unique<FileChooser>(S(maq::tr(maq::Str::ImportTitle, lang())), dir, "*.maqbank");
     chooser_->launchAsync(FileBrowserComponent::openMode | FileBrowserComponent::canSelectFiles,
                           [this](const FileChooser& fc) {
                               const File f = fc.getResult();
@@ -750,16 +814,16 @@ void ControlBar::doImport() {
                                   proc_.folders.setFolderUtf8(maq::FolderPurpose::PresetImport,
                                                               f.getParentDirectory().getFullPathName().toRawUTF8());
                                   proc_.saveFolderSettings();
-                                  setStatus(fr("Banque import\xC3\xA9") + fr("e : ") + f.getFileName() + " (" +
-                                            String(proc_.usedPresetCount()) + " presets)");
+                                  setStatus(S(maq::fmt(maq::Str::BankImported, lang(), f.getFileName().toStdString(),
+                                                       proc_.usedPresetCount())));
                               } else {
-                                  setStatus(fr("\xC3\x89") + fr("chec de l'import : fichier non valide"));
+                                  setStatus(S(maq::tr(maq::Str::ImportFailed, lang())));
                               }
                           });
 }
 
 void ControlBar::chooseFolder(maq::FolderPurpose purpose, const String& title) {
-    const File start(fr(proc_.folders.folderForUtf8(purpose).c_str()));
+    const File start(S(proc_.folders.folderForUtf8(purpose)));
     chooser_ = std::make_unique<FileChooser>(title, start);
     chooser_->launchAsync(FileBrowserComponent::openMode | FileBrowserComponent::canSelectDirectories,
                           [this, purpose](const FileChooser& fc) {
@@ -767,7 +831,40 @@ void ControlBar::chooseFolder(maq::FolderPurpose purpose, const String& title) {
                               if (!d.isDirectory()) return;
                               proc_.folders.setFolderUtf8(purpose, d.getFullPathName().toRawUTF8());
                               proc_.saveFolderSettings();
-                              setStatus("Dossier : " + d.getFullPathName());
+                              setStatus(S(maq::fmt(maq::Str::FolderSet, lang(), d.getFullPathName().toStdString())));
+                          });
+}
+
+// Manuel : page officielle de Doepfer, ou copie locale du PDF choisie par l'utilisateur
+void ControlBar::showManualMenu() {
+    const bool hasLocal = !proc_.prefs.manualPath.empty() && File(S(proc_.prefs.manualPath)).existsAsFile();
+    PopupMenu menu;
+    menu.addItem(1, S(maq::tr(maq::Str::ManualOnline, lang())));
+    menu.addItem(2, S(maq::tr(maq::Str::ManualLocal, lang())), hasLocal);
+    menu.addItem(3, S(maq::tr(maq::Str::ManualChoose, lang())));
+    menu.showMenuAsync(PopupMenu::Options().withTargetComponent(&manualBtn_), [this](int result) {
+        if (result == 1) {
+            URL("https://doepfer.de/maq_m_e.htm").launchInDefaultBrowser();
+        } else if (result == 2) {
+            const File f(S(proc_.prefs.manualPath));
+            if (f.existsAsFile()) f.startAsProcess();
+            else setStatus(S(maq::tr(maq::Str::ManualMissing, lang())));
+        } else if (result == 3) {
+            chooseManual();
+        }
+    });
+}
+
+void ControlBar::chooseManual() {
+    chooser_ = std::make_unique<FileChooser>(S(maq::tr(maq::Str::ManualChooseTitle, lang())), File(), "*.pdf");
+    chooser_->launchAsync(FileBrowserComponent::openMode | FileBrowserComponent::canSelectFiles,
+                          [this](const FileChooser& fc) {
+                              const File f = fc.getResult();
+                              if (f == File()) return;
+                              proc_.prefs.manualPath = f.getFullPathName().toStdString();
+                              proc_.savePreferences();
+                              setStatus(S(maq::tr(maq::Str::ManualSaved, lang())));
+                              f.startAsProcess();
                           });
 }
 
@@ -777,12 +874,13 @@ MaqEditor::MaqEditor(MaqProcessor& p) : AudioProcessorEditor(&p), facade_(p), ba
     content_.addAndMakeVisible(facade_);
     content_.addAndMakeVisible(bar_);
     addAndMakeVisible(content_);
+    bar_.setHelpSource([this] { return facade_.helpContext(); });
 
     setResizable(true, true);
-    setResizeLimits(685, 289, 2738, 1156);
+    setResizeLimits(685, 307, 2738, 1228);
     if (auto* c = getConstrainer())
         c->setFixedAspectRatio(static_cast<double>(kWidth) / static_cast<double>(kTotalHeight));
-    setSize(1096, 463);
+    setSize(1096, 491);
 }
 
 void MaqEditor::resized() {

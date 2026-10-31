@@ -13,7 +13,7 @@ namespace maqui {
 
 constexpr int kWidth = 1369;    // taille de l'image de la façade
 constexpr int kHeight = 502;
-constexpr int kBarHeight = 76;  // barre de contrôle sous la façade
+constexpr int kBarHeight = 112;  // barre de contrôle sous la façade (contrôles, état, aide)
 constexpr int kTotalHeight = kHeight + kBarHeight;
 
 // Dessine le capuchon argenté des potards par-dessus celui de la photo.
@@ -57,6 +57,9 @@ public:
     explicit Facade(MaqProcessor&);
     ~Facade() override;
     void paint(juce::Graphics&) override;
+
+    // Ce que l'utilisateur est en train de régler : sert à afficher l'aide contextuelle
+    maq::HelpContext helpContext() const;
 
 private:
     enum class Menu { None, Event, Channel, FirstLast, Prescale, Mode, SingleStep, Preset };
@@ -114,7 +117,7 @@ private:
     std::string shownText_ = "   ";
 };
 
-// Barre sous la façade : noms de notes, presets, import/export, dossiers.
+// Barre sous la façade : noms de notes, presets, import/export, dossiers, aide, langue, manuel, Panic.
 class ControlBar : public juce::Component, private juce::Timer {
 public:
     explicit ControlBar(MaqProcessor&);
@@ -122,29 +125,38 @@ public:
     void paint(juce::Graphics&) override;
     void resized() override;
 
+    void setHelpSource(std::function<maq::HelpContext()> source) { helpSource_ = std::move(source); }
+
 private:
     void timerCallback() override;
+    maq::Lang lang() const { return proc_.prefs.language; }
+    void applyLanguage();
     int selectedSlot() const;
     void bumpPreset(int delta);
     void setStatus(const juce::String& text);
     void doExport();
     void doImport();
     void chooseFolder(maq::FolderPurpose purpose, const juce::String& title);
+    void showManualMenu();
+    void chooseManual();
 
     MaqProcessor& proc_;
     juce::LookAndFeel_V4 lnf_;
 
     juce::TextButton notesBtn_, frBtn_, prevBtn_, nextBtn_, storeBtn_, recallBtn_;
     juce::TextButton importBtn_, exportBtn_, importDirBtn_, exportDirBtn_;
+    juce::TextButton panicBtn_, manualBtn_, langBtn_;
     juce::ToggleButton keepSameBtn_;
-    juce::Label titleLabel_, presetLabel_, statusLabel_;
+    juce::Label titleLabel_, presetLabel_, statusLabel_, helpLabel_;
     juce::TextEditor nameEditor_;
     std::unique_ptr<juce::ButtonParameterAttachment> notesAttach_, frAttach_;
     std::unique_ptr<juce::FileChooser> chooser_;
+    std::function<maq::HelpContext()> helpSource_;
 
     int shownSlot_ = -1;
     bool shownUsed_ = false;
     juce::String shownName_;
+    juce::String shownHelp_;
 };
 
 class MaqEditor : public juce::AudioProcessorEditor {

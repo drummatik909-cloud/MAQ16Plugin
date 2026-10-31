@@ -9,6 +9,8 @@
 #include "engine/Unit.h"
 #include "presets/Bank.h"
 #include "presets/FolderSettings.h"
+#include "ui/Preferences.h"
+#include "ui/Strings.h"
 
 class MaqProcessor : public juce::AudioProcessor {
 public:
@@ -60,12 +62,20 @@ public:
     maq::FolderSettings folders;
     void saveFolderSettings();
 
+    // ---- Préférences communes à tous les projets (langue, copie locale du manuel) ----
+    maq::Preferences prefs;
+    void savePreferences();
+
+    // ---- Panic : coupe toutes les notes (traité au prochain bloc audio) ----
+    void requestPanic() { panicRequested.store(true); }
+
     juce::AudioProcessorValueTreeState apvts;
 
     // Lus par l'interface (mis à jour dans processBlock)
     std::array<std::atomic<int>, maq::kRows> uiStep;
     std::atomic<double> uiBpm{0.0};
     std::atomic<bool> uiPlaying{false};
+    std::atomic<bool> panicRequested{false};
 
 private:
     static juce::AudioProcessorValueTreeState::ParameterLayout createLayout();
