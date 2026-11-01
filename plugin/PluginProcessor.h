@@ -6,6 +6,7 @@
 #include <atomic>
 #include <vector>
 #include "engine/Events.h"
+#include "engine/Scale.h"
 #include "engine/Unit.h"
 #include "presets/Bank.h"
 #include "presets/FolderSettings.h"
@@ -69,6 +70,14 @@ public:
     // ---- Panic : coupe toutes les notes (traité au prochain bloc audio) ----
     void requestPanic() { panicRequested.store(true); }
 
+    // ---- Apprentissage : notes jouées au clavier, mises de côté pour l'interface ----
+    struct NoteIn {
+        int note = 0;
+        int velocity = 0;
+    };
+    std::atomic<bool> learnActive{false};
+    bool popNote(NoteIn& out);
+
     juce::AudioProcessorValueTreeState apvts;
 
     // Lus par l'interface (mis à jour dans processBlock)
@@ -96,6 +105,12 @@ private:
         std::array<std::atomic<float>*, maq::kSteps> mute{};
     };
     std::array<RowParams, maq::kRows> rp_;
+
+    std::atomic<float>* scaleRoot_ = nullptr;
+    std::atomic<float>* scaleType_ = nullptr;
+    std::atomic<float>* scaleMode_ = nullptr;
+    juce::AbstractFifo noteFifo_{64};
+    std::array<NoteIn, 64> noteBuf_{};
 
     mutable juce::CriticalSection bankLock_;
     maq::Bank bank_;

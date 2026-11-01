@@ -15,6 +15,7 @@ enum class Str {
     ExportTitle, ImportTitle, ImportDirTitle, ExportDirTitle,
     ManualOnline, ManualLocal, ManualChoose, ManualChooseTitle, ManualSaved, ManualMissing,
     PanicDone,
+    Learn, Pause, Skip, ScaleLabel, ScaleOff, ScaleLock, ScaleOutput, LearnOn, LearnOff,
     Count
 };
 
@@ -36,6 +37,7 @@ struct HelpContext {
     bool ccEdit = false;    // EVENT : réglage du numéro du contrôleur libre
     bool store = false;     // PRESET : mode enregistrement
     bool singleRow = false; // SINGLE STEP : une rangée à la fois
+    bool learn = false;     // mode apprentissage actif (aucun menu choisi)
 };
 
 std::string helpText(const HelpContext& ctx, Lang lang);

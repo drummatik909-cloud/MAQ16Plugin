@@ -47,6 +47,15 @@ const Pair kStrings[] = {
     {"Manuel local enregistré", "Local manual saved"},                   // ManualSaved
     {"Fichier introuvable", "File not found"},                           // ManualMissing
     {"Panic : toutes les notes sont coupées", "Panic: all notes are off"},               // PanicDone
+    {"Apprentissage", "Learn"},                                          // Learn
+    {"Pause", "Rest"},                                                   // Pause
+    {"Saut", "Skip"},                                                    // Skip
+    {"Gamme", "Scale"},                                                  // ScaleLabel
+    {"Aucune", "Off"},                                                   // ScaleOff
+    {"Verrouillage", "Lock"},                                            // ScaleLock
+    {"Quantif. en sortie", "Output quantize"},                           // ScaleOutput
+    {"Apprentissage : clique un potard, puis joue des notes", "Learn: click a knob, then play notes"},  // LearnOn
+    {"Apprentissage terminé", "Learning finished"},                      // LearnOff
 };
 static_assert(sizeof(kStrings) / sizeof(kStrings[0]) == static_cast<std::size_t>(Str::Count),
               "la table de textes doit suivre l'énumération Str");
@@ -155,6 +164,9 @@ Lang langFromCode(const std::string& code) { return code == "en" ? Lang::English
 const char* langCode(Lang lang) { return lang == Lang::English ? "en" : "fr"; }
 
 std::string helpText(const HelpContext& c, Lang l) {
+    if (c.learn && c.menu == HelpMenu::None)
+        return pick(l, "Apprentissage : clique sur un potard pour placer le curseur (LED vive), puis joue des notes au clavier. Chaque note règle le pas et le curseur avance. Pause et Saut passent un pas.",
+                       "Learn: click a knob to place the cursor (bright LED), then play notes on your keyboard. Each note sets the step and the cursor moves on. Rest and Skip pass over a step.");
     switch (c.menu) {
         case HelpMenu::None:
             return pick(l, "Tempo : le séquenceur suit l'horloge de Bitwig (24 impulsions par noire). Choisis un menu avec les 8 boutons ; l'encodeur DATA règle la valeur.",

@@ -12,6 +12,11 @@ public:
     std::array<RowConfig, kRows> rows;
     int relativeBase = 36;  // note de référence pour NoteRel (hypothèse : note reçue absente = 36)
 
+    // Gamme (lot 3) : en mode « quantification en sortie » (2), chaque note jouée est ramenée dans la gamme
+    int scaleMode = 0;
+    int scaleRoot = 0;
+    int scaleType = 0;
+
     void start();                                   // départ avec remise au premier pas (MIDI Start)
     void continuePlaying();                         // reprise (MIDI Continue)
     void stop(std::vector<MidiMsg>& out);           // arrêt, envoie les Note Off en attente

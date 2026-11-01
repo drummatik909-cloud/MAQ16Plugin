@@ -5,6 +5,7 @@
 #include <vector>
 #include "engine/Unit.h"
 #include "engine/Events.h"
+#include "engine/Scale.h"
 #include "presets/Bank.h"
 #include "presets/FolderSettings.h"
 #include "ui/Preferences.h"
@@ -343,6 +344,121 @@ static void testPreferences() {
     CHECK(!Preferences::defaultFile().empty());
 }
 
+
+static void testScales() {
+    // appartenance et quantification (Do majeur)
+    CHECK(inScale(60, 0, 1) && inScale(62, 0, 1) && !inScale(61, 0, 1) && !inScale(63, 0, 1) && inScale(71, 0, 1));
+    CHECK(quantizeNote(61, 0, 1) == 60);   // à égalité : la plus grave
+    CHECK(quantizeNote(63, 0, 1) == 62);
+    CHECK(quantizeNote(66, 0, 1) == 65);
+    CHECK(quantizeNote(60, 0, 1) == 60);
+    // la fondamentale décale la gamme : Ré majeur (Fa# et Do# présents)
+    CHECK(inScale(66, 2, 1) && inScale(61, 2, 1) && !inScale(60, 2, 1));
+    // pentatonique mineure de La : La Do Ré Mi Sol
+    CHECK(inScale(69, 9, 11) && inScale(72, 9, 11) && inScale(74, 9, 11) && !inScale(71, 9, 11));
+    CHECK(quantizeNote(70, 9, 11) == 69);
+    // chromatique : rien ne change
+    for (int n = 0; n < 128; ++n) CHECK(quantizeNote(n, 5, 0) == n);
+    // dans une plage
+    CHECK(quantizeNoteInRange(49, 36, 48, 0, 1) == 48);   // 49 est hors plage : on reste dans 36..48
+    CHECK(quantizeNoteInRange(37, 36, 48, 0, 1) == 36);
+    // noms
+    CHECK(scaleName(1, Lang::English) == "Major" && scaleName(6, Lang::French) == "Phrygien");
+    CHECK(pitchClassName(1, false) == "C#" && pitchClassName(3, true) == "R\xC3\xA9#" && pitchClassName(13, false) == "C#");
+    for (int t = 0; t < kScaleCount; ++t) CHECK(!scaleName(t, Lang::French).empty() && scaleMask(t) != 0);
+}
+
+static void testPotConversions() {
+    // note <-> potard : exact pour toutes les plages
+    for (int oct = 1; oct <= 5; ++oct) {
+        for (int n = 36; n <= 36 + 12 * oct; ++n) {
+            const int p = potForNote(oct, n, false);
+            CHECK(p >= 0 && noteFromPot(oct, p) == n);
+            const int q = potForNote(oct, n, true);
+            CHECK(q >= 0 && q <= 126 && noteFromPot(oct, q) == n);
+        }
+        CHECK(potForNote(oct, 35, false) == -1 && potForNote(oct, 37 + 12 * oct, false) == -1);
+        for (int o = 0; o <= 12 * oct; ++o) {
+            const int p = potForOffset(oct, o, true);
+            CHECK(p >= 0 && p <= 126 && noteOffsetFromPot(oct, p) == o);
+        }
+    }
+    // verrouillage : un potard de note tombe sur une note de la gamme, la pause reste une pause
+    EventConfig na1 = eventForIndex(2);    // nA1
+    EventConfig pa1 = eventForIndex(50);   // PA1
+    for (int pot = 0; pot < 127; ++pot) {
+        const int s = snapPot(na1, pot, 0, 1);
+        CHECK(inScale(noteFromPot(1, s), 0, 1));
+        CHECK(snapPot(na1, s, 0, 1) == s);   // idempotent
+    }
+    CHECK(snapPot(pa1, 127, 0, 1) == 127);
+    EventConfig cc = eventForIndex(13);
+    CHECK(snapPot(cc, 77, 0, 1) == 77);      // pas une rangée de notes
+}
+
+static void testLearn() {
+    int ref = -1;
+    EventConfig na2 = eventForIndex(3);    // nA2 : 36..60
+    // une note de la plage
+    int p = learnPot(na2, 48, ref, false, 0, 0);
+    CHECK(p >= 0 && noteFromPot(2, p) == 48);
+    // note trop grave ou trop aiguë : repliée dans la plage, même classe de hauteur
+    p = learnPot(na2, 24, ref, false, 0, 0);
+    CHECK(noteFromPot(2, p) == 36);
+    p = learnPot(na2, 79, ref, false, 0, 0);   // Sol : repli vers 55
+    CHECK(noteFromPot(2, p) == 55);
+    // verrouillage : une note hors gamme est ramenée dans la gamme
+    p = learnPot(na2, 49, ref, true, 0, 1);    // Do# en Do majeur -> Do
+    CHECK(noteFromPot(2, p) == 48);
+    // PA : la note la plus haute reste jouable (pas de pause)
+    EventConfig pa1 = eventForIndex(50);
+    p = learnPot(pa1, 48, ref, false, 0, 0);
+    CHECK(p >= 0 && p <= 126 && noteFromPot(1, p) == 48);
+    // notes relatives : la première note sert de référence
+    int refR = -1;
+    EventConfig nr1 = eventForIndex(7);
+    p = learnPot(nr1, 60, refR, false, 0, 0);
+    CHECK(refR == 60 && noteOffsetFromPot(1, p) == 0);
+    p = learnPot(nr1, 67, refR, false, 0, 0);
+    CHECK(noteOffsetFromPot(1, p) == 7);
+    p = learnPot(nr1, 55, refR, false, 0, 0);  // plus grave que la référence : repli d'une octave vers le haut
+    CHECK(noteOffsetFromPot(1, p) == 7);
+    // les autres Events n'apprennent pas
+    int ref2 = -1;
+    CHECK(learnPot(eventForIndex(13), 60, ref2, false, 0, 0) == -1);
+    CHECK(learnPot(eventForIndex(0), 60, ref2, false, 0, 0) == -1);
+}
+
+static void testOutputQuantize() {
+    Unit u;
+    u.rows[1].event.kind = EventKind::Off;
+    u.rows[2].event.kind = EventKind::Off;
+    u.rows[0].gate = 1;
+    u.rows[0].last = 4;
+    // Do#1 (37), Ré#1 (39), Fa#1 (42) : toutes hors Do majeur
+    u.rows[0].pot[0] = potForNote(1, 37, false);
+    u.rows[0].pot[1] = potForNote(1, 39, false);
+    u.rows[0].pot[2] = potForNote(1, 42, false);
+    u.rows[0].pot[3] = potForNote(1, 36, false);
+    {   // sans gamme : les notes sont jouées telles quelles
+        Unit a = u;
+        auto on = noteOns(run(a, 4));
+        CHECK((on == std::vector<int>{37, 39, 42, 36}));
+    }
+    {   // quantification en sortie (Do majeur) : Do#->Do, Ré#->Ré, Fa#->Fa
+        Unit a = u;
+        a.scaleMode = kScaleModeOutput; a.scaleRoot = 0; a.scaleType = 1;
+        auto on = noteOns(run(a, 4));
+        CHECK((on == std::vector<int>{36, 38, 41, 36}));
+    }
+    {   // verrouillage : le moteur ne quantifie pas, c'est l'interface qui ramène les potards
+        Unit a = u;
+        a.scaleMode = kScaleModeLock; a.scaleRoot = 0; a.scaleType = 1;
+        auto on = noteOns(run(a, 4));
+        CHECK((on == std::vector<int>{37, 39, 42, 36}));
+    }
+}
+
 static fs::path tempDir(const char* name) {
     fs::path d = fs::temp_directory_path() / name;
     std::error_code ec;
@@ -463,6 +579,10 @@ int main() {
     testFolderUtf8();
     testStringsAndHelp();
     testPreferences();
+    testScales();
+    testPotConversions();
+    testLearn();
+    testOutputQuantize();
     std::printf("%d verifications, %d echec(s)\n", g_checks, g_fail);
     return g_fail == 0 ? 0 : 1;
 }

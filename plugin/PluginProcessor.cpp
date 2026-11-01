@@ -14,6 +14,9 @@ MaqProcessor::MaqProcessor()
     for (auto& s : uiStep) s.store(0);
     folders.load(maq::FolderSettings::defaultSettingsFile());
     prefs.load(maq::Preferences::defaultFile());
+    scaleRoot_ = apvts.getRawParameterValue("scaleroot");
+    scaleType_ = apvts.getRawParameterValue("scaletype");
+    scaleMode_ = apvts.getRawParameterValue("scalemode");
 
     for (int r = 0; r < maq::kRows; ++r) {
         auto& p = rp_[static_cast<size_t>(r)];
@@ -40,6 +43,19 @@ AudioProcessorValueTreeState::ParameterLayout MaqProcessor::createLayout() {
     layout.add(std::make_unique<AudioParameterBool>(ParameterID{"notefr", 1}, "Note names in French", true));
     layout.add(std::make_unique<AudioParameterInt>(ParameterID{"preset", 1}, "Preset slot", 0, maq::kPresetSlots, 0));
 
+    {   // Gamme : fondamentale, type, mode (aucune / verrouillage / quantification en sortie)
+        StringArray roots, scales, modes;
+        for (int pc = 0; pc < 12; ++pc) roots.add(String::fromUTF8(maq::pitchClassName(pc, false).c_str()));
+        for (int t = 0; t < maq::kScaleCount; ++t)
+            scales.add(String::fromUTF8(maq::scaleName(t, maq::Lang::English).c_str()));
+        modes.add("Off");
+        modes.add("Lock");
+        modes.add("Output quantize");
+        layout.add(std::make_unique<AudioParameterChoice>(ParameterID{"scaleroot", 1}, "Scale root", roots, 0));
+        layout.add(std::make_unique<AudioParameterChoice>(ParameterID{"scaletype", 1}, "Scale type", scales, 0));
+        layout.add(std::make_unique<AudioParameterChoice>(ParameterID{"scalemode", 1}, "Scale mode", modes, 0));
+    }
+
     for (int r = 0; r < maq::kRows; ++r) {
         const String rn = "Row " + String(r + 1);
         // Valeurs par défaut du preset 0 du manuel : nA1, canaux 1/2/3, pas 1 à 16, g = 6, n = 1, Forward
@@ -61,6 +77,10 @@ AudioProcessorValueTreeState::ParameterLayout MaqProcessor::createLayout() {
 }
 
 void MaqProcessor::syncEngineFromParams() {
+    unit_.scaleRoot = toInt(scaleRoot_);
+    unit_.scaleType = toInt(scaleType_);
+    unit_.scaleMode = toInt(scaleMode_);
+
     for (int r = 0; r < maq::kRows; ++r) {
         const auto& p = rp_[static_cast<size_t>(r)];
         auto& cfg = unit_.rows[static_cast<size_t>(r)];
@@ -112,6 +132,23 @@ void MaqProcessor::emit(const std::vector<maq::MidiMsg>& msgs, int samplePos, Mi
 }
 
 void MaqProcessor::processBlock(AudioBuffer<float>& buffer, MidiBuffer& midi) {
+    if (learnActive.load()) {  // apprentissage : on met de côté les notes jouées au clavier
+        for (const auto metadata : midi) {
+            const MidiMessage m = metadata.getMessage();
+            if (m.isNoteOn()) {
+                int start1, size1, start2, size2;
+                noteFifo_.prepareToWrite(1, start1, size1, start2, size2);
+                if (size1 > 0) {
+                    NoteIn n;
+                    n.note = m.getNoteNumber();
+                    n.velocity = m.getVelocity();
+                    noteBuf_[static_cast<size_t>(start1)] = n;
+                    noteFifo_.finishedWrite(1);
+                }
+            }
+        }
+    }
+
     midi.clear();  // plugin générateur : les notes entrantes ne sont pas transmises
     const int numSamples = buffer.getNumSamples();
 
@@ -291,6 +328,15 @@ bool MaqProcessor::importBank(const File& file) {
 }
 
 void MaqProcessor::saveFolderSettings() { folders.save(maq::FolderSettings::defaultSettingsFile()); }
+
+bool MaqProcessor::popNote(NoteIn& out) {
+    int start1, size1, start2, size2;
+    noteFifo_.prepareToRead(1, start1, size1, start2, size2);
+    if (size1 <= 0) return false;
+    out = noteBuf_[static_cast<size_t>(start1)];
+    noteFifo_.finishedRead(1);
+    return true;
+}
 
 void MaqProcessor::savePreferences() { prefs.save(maq::Preferences::defaultFile()); }
 

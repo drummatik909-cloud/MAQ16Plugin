@@ -1,4 +1,5 @@
 #include "Unit.h"
+#include "Scale.h"
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
@@ -139,6 +140,7 @@ void Unit::fireRow(int r, std::vector<MidiMsg>& out) {
         int note;
         if (isRelativeKind(k)) note = clampi(relativeBase + noteOffsetFromPot(cfg.event.octaves, pot), 0, 127);
         else note = clampi(noteFromPot(cfg.event.octaves, pot), 0, 127);
+        if (scaleMode == kScaleModeOutput) note = quantizeNote(note, scaleRoot, scaleType);
         int vel = 100;
         for (int v = 0; v < kRows; ++v) {
             if (rows[v].event.kind == EventKind::Velocity && (rows[v].velocityTargets & (1 << r)) && st_[v].hasCurrent) {

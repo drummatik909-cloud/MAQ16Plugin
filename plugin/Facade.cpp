@@ -1,5 +1,6 @@
 #include "Facade.h"
 #include <BinaryData.h>
+#include "engine/Scale.h"
 #include <cmath>
 #include <cstdio>
 
@@ -242,6 +243,24 @@ Facade::Facade(MaqProcessor& p) : proc_(p), apvts_(p.apvts) {
                     touchStep_ = s;
                     touchUntil_ = Time::getMillisecondCounter() + 1500;
                 }
+                // Verrouillage de gamme : un potard de note tombe sur une note de la gamme
+                if (!snapping_ && raw->isMouseButtonDown() && getInt("scalemode") == maq::kScaleModeLock) {
+                    const int pot = static_cast<int>(std::lround(raw->getValue()));
+                    const int snapped = maq::snapPot(eventOf(r), pot, getInt("scaleroot"), getInt("scaletype"));
+                    if (snapped != pot) {
+                        snapping_ = true;
+                        raw->setValue(snapped, sendNotificationSync);
+                        snapping_ = false;
+                    }
+                }
+            };
+            // Apprentissage : cliquer un potard place le curseur sur ce pas
+            k->onDragStart = [this, r, s] {
+                if (learnOn_) {
+                    learnRow_ = r;
+                    learnStep_ = s;
+                    learnRef_ = -1;
+                }
             };
             knobs_[static_cast<size_t>(r * maq::kSteps + s)] = std::move(k);
         }
@@ -269,11 +288,13 @@ Facade::Facade(MaqProcessor& p) : proc_(p), apvts_(p.apvts) {
 
 Facade::~Facade() {
     stopTimer();
+    proc_.learnActive.store(false);
     attachments_.clear();
     for (auto& k : knobs_)
         if (k) {
             k->textFromValueFunction = nullptr;
             k->onValueChange = nullptr;
+            k->onDragStart = nullptr;
             k->setLookAndFeel(nullptr);
         }
 }
@@ -473,6 +494,7 @@ void Facade::toggleMuteOfSelectedStep() {
 }
 
 int Facade::ledLevelFor(int r, int s) const {
+    if (learnOn_ && r == learnRow_ && s == learnStep_) return 2;  // curseur d'apprentissage
     if (getBool(MaqProcessor::muteId(r, s))) return 0;  // un pas muet reste éteint
     if (menu_ == Menu::SingleStep) {
         if (singleRow_ < 0) return s == selStep_ ? 2 : 0;
@@ -480,7 +502,7 @@ int Facade::ledLevelFor(int r, int s) const {
         return 0;
     }
     int level = 0;
-    if (isRowMenu() && r == row_) level = 1;  // la rangée choisie « miroite »
+    if ((isRowMenu() && r == row_) || (learnOn_ && r == learnRow_)) level = 1;  // la rangée choisie « miroite »
     if (proc_.uiPlaying.load() && proc_.uiStep[static_cast<size_t>(r)].load() == s + 1) level = 2;
     return level;
 }
@@ -517,6 +539,7 @@ std::string Facade::computeDisplay() const {
     switch (menu_) {
         case Menu::None: {
             if (touchRow_ >= 0 && now < touchUntil_) return knobSegText(touchRow_, touchStep_);
+            if (learnOn_) return "LEA";
             const double bpm = proc_.uiBpm.load();
             return bpm > 0.0 ? num3(static_cast<int>(std::lround(bpm))) : std::string("---");
         }
@@ -549,6 +572,10 @@ std::string Facade::computeDisplay() const {
 }
 
 void Facade::timerCallback() {
+    if (learnOn_) {
+        MaqProcessor::NoteIn note;
+        while (proc_.popNote(note)) handleLearnNote(note);
+    }
     for (int r = 0; r < maq::kRows; ++r) {
         for (int s = 0; s < maq::kSteps; ++s) {
             const size_t idx = static_cast<size_t>(r * maq::kSteps + s);
@@ -573,6 +600,80 @@ void Facade::timerCallback() {
     }
 }
 
+// ---------------------------------------------------------------- Apprentissage
+
+void Facade::setPotValue(int row, int step, int value) {
+    if (auto* p = apvts_.getParameter(MaqProcessor::potId(row, step))) {
+        p->beginChangeGesture();
+        p->setValueNotifyingHost(p->convertTo0to1(static_cast<float>(value)));
+        p->endChangeGesture();
+    }
+}
+
+void Facade::setMuteValue(int row, int step, bool muted) {
+    if (auto* p = apvts_.getParameter(MaqProcessor::muteId(row, step))) {
+        p->beginChangeGesture();
+        p->setValueNotifyingHost(muted ? 1.0f : 0.0f);
+        p->endChangeGesture();
+    }
+}
+
+void Facade::setLearn(bool on) {
+    learnOn_ = on;
+    learnRef_ = -1;
+    if (on) {
+        MaqProcessor::NoteIn dummy;
+        while (proc_.popNote(dummy)) {}  // on oublie les notes jouées avant
+        learnStep_ = jlimit(0, maq::kSteps - 1, getInt(MaqProcessor::rowId("first", learnRow_)) - 1);
+    }
+    proc_.learnActive.store(on);
+}
+
+// Le curseur avance de First à Last, puis revient au premier pas
+void Facade::advanceLearn() {
+    int first = jlimit(0, maq::kSteps - 1, getInt(MaqProcessor::rowId("first", learnRow_)) - 1);
+    int last = jlimit(0, maq::kSteps - 1, getInt(MaqProcessor::rowId("last", learnRow_)) - 1);
+    if (last < first) std::swap(first, last);
+    if (learnStep_ < first || learnStep_ >= last) learnStep_ = first;
+    else ++learnStep_;
+}
+
+void Facade::handleLearnNote(const MaqProcessor::NoteIn& n) {
+    const maq::EventConfig e = eventOf(learnRow_);
+    const int pot = maq::learnPot(e, n.note, learnRef_, getInt("scalemode") == maq::kScaleModeLock,
+                                  getInt("scaleroot"), getInt("scaletype"));
+    if (pot < 0) {  // la rangée choisie n'est pas une rangée de notes
+        flash("---");
+        return;
+    }
+    setPotValue(learnRow_, learnStep_, pot);
+    setMuteValue(learnRow_, learnStep_, false);
+
+    // Une rangée de vélocité enregistre la force de frappe sur le même pas
+    for (int r = 0; r < maq::kRows; ++r)
+        if (r != learnRow_ && eventOf(r).kind == maq::EventKind::Velocity)
+            setPotValue(r, learnStep_, jlimit(1, 127, n.velocity));
+
+    touchRow_ = learnRow_;  // la note apprise s'affiche un instant
+    touchStep_ = learnStep_;
+    touchUntil_ = Time::getMillisecondCounter() + 1500;
+    advanceLearn();
+}
+
+void Facade::learnPause() {
+    if (!learnOn_) return;
+    const maq::EventConfig e = eventOf(learnRow_);
+    if (e.kind == maq::EventKind::NoteAbsPause || e.kind == maq::EventKind::NoteRelPause)
+        setPotValue(learnRow_, learnStep_, 127);  // potard à fond à droite = pause
+    else
+        setMuteValue(learnRow_, learnStep_, true);
+    advanceLearn();
+}
+
+void Facade::learnSkip() {
+    if (learnOn_) advanceLearn();
+}
+
 maq::HelpContext Facade::helpContext() const {
     maq::HelpContext c;
     switch (menu_) {
@@ -591,6 +692,7 @@ maq::HelpContext Facade::helpContext() const {
     c.ccEdit = ccEdit_;
     c.store = storeMode_;
     c.singleRow = singleRow_ >= 0;
+    c.learn = learnOn_;
     return c;
 }
 
@@ -659,6 +761,20 @@ ControlBar::ControlBar(MaqProcessor& p) : proc_(p) {
         setStatus(S(maq::tr(maq::Str::PanicDone, lang())));
     };
     manualBtn_.onClick = [this] { showManualMenu(); };
+
+    learnBtn_.setClickingTogglesState(true);
+    learnBtn_.setColour(TextButton::buttonOnColourId, Colour(0xffb02a1a));
+    learnBtn_.onClick = [this] {
+        const bool on = learnBtn_.getToggleState();
+        if (onLearn_) onLearn_(on);
+        setStatus(S(maq::tr(on ? maq::Str::LearnOn : maq::Str::LearnOff, lang())));
+    };
+    pauseBtn_.onClick = [this] { if (onPause_) onPause_(); };
+    skipBtn_.onClick = [this] { if (onSkip_) onSkip_(); };
+    rootBox_.onChange = [this] { setChoiceParam("scaleroot", rootBox_.getSelectedId() - 1); };
+    typeBox_.onChange = [this] { setChoiceParam("scaletype", typeBox_.getSelectedId() - 1); };
+    modeBox_.onChange = [this] { setChoiceParam("scalemode", modeBox_.getSelectedId() - 1); };
+    scaleLabel_.setJustificationType(Justification::centredRight);
     langBtn_.onClick = [this] {
         proc_.prefs.language = (lang() == maq::Lang::French) ? maq::Lang::English : maq::Lang::French;
         proc_.savePreferences();
@@ -666,8 +782,13 @@ ControlBar::ControlBar(MaqProcessor& p) : proc_(p) {
     };
 
     for (auto* b : {&notesBtn_, &frBtn_, &prevBtn_, &nextBtn_, &storeBtn_, &recallBtn_, &importBtn_, &exportBtn_,
-                    &importDirBtn_, &exportDirBtn_, &panicBtn_, &manualBtn_, &langBtn_})
+                    &importDirBtn_, &exportDirBtn_, &panicBtn_, &manualBtn_, &langBtn_,
+                    &learnBtn_, &pauseBtn_, &skipBtn_})
         addAndMakeVisible(*b);
+    addAndMakeVisible(scaleLabel_);
+    addAndMakeVisible(rootBox_);
+    addAndMakeVisible(typeBox_);
+    addAndMakeVisible(modeBox_);
     addAndMakeVisible(keepSameBtn_);
     addAndMakeVisible(titleLabel_);
     addAndMakeVisible(presetLabel_);
@@ -697,6 +818,11 @@ void ControlBar::applyLanguage() {
     keepSameBtn_.setButtonText(S(maq::tr(maq::Str::KeepSameFolder, l)));
     manualBtn_.setButtonText(S(maq::tr(maq::Str::Manual, l)));
     langBtn_.setButtonText(l == maq::Lang::French ? "FR" : "EN");
+    learnBtn_.setButtonText(S(maq::tr(maq::Str::Learn, l)));
+    pauseBtn_.setButtonText(S(maq::tr(maq::Str::Pause, l)));
+    skipBtn_.setButtonText(S(maq::tr(maq::Str::Skip, l)));
+    scaleLabel_.setText(S(maq::tr(maq::Str::ScaleLabel, l)), dontSendNotification);
+    fillScaleBoxes();
     setStatus(String());
     shownSlot_ = -1;       // force la mise à jour du champ de nom
     shownHelp_ = String(); // et de l'aide
@@ -706,7 +832,7 @@ void ControlBar::paint(Graphics& g) {
     g.fillAll(Colour(0xff161616));
     g.setColour(Colour(0xff3a3a3a));
     g.drawHorizontalLine(0, 0.0f, static_cast<float>(getWidth()));
-    g.drawHorizontalLine(74, 20.0f, static_cast<float>(getWidth() - 20));
+    g.drawHorizontalLine(108, 20.0f, static_cast<float>(getWidth() - 20));
 }
 
 void ControlBar::resized() {
@@ -730,8 +856,16 @@ void ControlBar::resized() {
     statusLabel_.setBounds(300, 42, 830, 28);
     manualBtn_.setBounds(1150, 42, 100, 28);
     langBtn_.setBounds(1260, 42, 90, 28);
-    // Ligne 3 : aide contextuelle (deux lignes)
-    helpLabel_.setBounds(20, 76, 1330, 34);
+    // Ligne 3 : apprentissage au clavier et gamme
+    learnBtn_.setBounds(20, 76, 120, 28);
+    pauseBtn_.setBounds(146, 76, 70, 28);
+    skipBtn_.setBounds(222, 76, 70, 28);
+    scaleLabel_.setBounds(310, 76, 60, 28);
+    rootBox_.setBounds(376, 76, 74, 28);
+    typeBox_.setBounds(456, 76, 220, 28);
+    modeBox_.setBounds(682, 76, 200, 28);
+    // Ligne 4 : aide contextuelle (deux lignes)
+    helpLabel_.setBounds(20, 112, 1330, 34);
 }
 
 int ControlBar::selectedSlot() const {
@@ -772,6 +906,10 @@ void ControlBar::timerCallback() {
         shownName_ = name;
     }
 
+    const bool frNames = proc_.apvts.getRawParameterValue("notefr")->load() > 0.5f;
+    if (frNames != shownFrNames_) fillScaleBoxes();  // les noms de notes ont changé de langue
+    else syncScaleBoxes();
+
     if (helpSource_) {
         const String help = S(maq::helpText(helpSource_(), lang()));
         if (help != shownHelp_) {
@@ -779,6 +917,38 @@ void ControlBar::timerCallback() {
             helpLabel_.setText(help, dontSendNotification);
         }
     }
+}
+
+void ControlBar::setChoiceParam(const String& id, int index) {
+    if (auto* p = proc_.apvts.getParameter(id)) {
+        p->beginChangeGesture();
+        p->setValueNotifyingHost(p->convertTo0to1(static_cast<float>(index)));
+        p->endChangeGesture();
+    }
+}
+
+void ControlBar::fillScaleBoxes() {
+    const bool french = proc_.apvts.getRawParameterValue("notefr")->load() > 0.5f;
+    shownFrNames_ = french;
+    rootBox_.clear(dontSendNotification);
+    for (int pc = 0; pc < 12; ++pc) rootBox_.addItem(S(maq::pitchClassName(pc, french)), pc + 1);
+    typeBox_.clear(dontSendNotification);
+    for (int t = 0; t < maq::kScaleCount; ++t) typeBox_.addItem(S(maq::scaleName(t, lang())), t + 1);
+    modeBox_.clear(dontSendNotification);
+    modeBox_.addItem(S(maq::tr(maq::Str::ScaleOff, lang())), 1);
+    modeBox_.addItem(S(maq::tr(maq::Str::ScaleLock, lang())), 2);
+    modeBox_.addItem(S(maq::tr(maq::Str::ScaleOutput, lang())), 3);
+    syncScaleBoxes();
+}
+
+void ControlBar::syncScaleBoxes() {
+    auto index = [this](const char* id) {
+        return static_cast<int>(std::lround(proc_.apvts.getRawParameterValue(id)->load()));
+    };
+    const int root = index("scaleroot") + 1, type = index("scaletype") + 1, mode = index("scalemode") + 1;
+    if (rootBox_.getSelectedId() != root) rootBox_.setSelectedId(root, dontSendNotification);
+    if (typeBox_.getSelectedId() != type) typeBox_.setSelectedId(type, dontSendNotification);
+    if (modeBox_.getSelectedId() != mode) modeBox_.setSelectedId(mode, dontSendNotification);
 }
 
 void ControlBar::doExport() {
@@ -875,12 +1045,15 @@ MaqEditor::MaqEditor(MaqProcessor& p) : AudioProcessorEditor(&p), facade_(p), ba
     content_.addAndMakeVisible(bar_);
     addAndMakeVisible(content_);
     bar_.setHelpSource([this] { return facade_.helpContext(); });
+    bar_.setLearnCallbacks([this](bool on) { facade_.setLearn(on); },
+                           [this] { facade_.learnPause(); },
+                           [this] { facade_.learnSkip(); });
 
     setResizable(true, true);
-    setResizeLimits(685, 307, 2738, 1228);
+    setResizeLimits(685, 325, 2738, 1300);
     if (auto* c = getConstrainer())
         c->setFixedAspectRatio(static_cast<double>(kWidth) / static_cast<double>(kTotalHeight));
-    setSize(1096, 491);
+    setSize(1096, 520);
 }
 
 void MaqEditor::resized() {

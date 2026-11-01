@@ -13,7 +13,7 @@ namespace maqui {
 
 constexpr int kWidth = 1369;    // taille de l'image de la façade
 constexpr int kHeight = 502;
-constexpr int kBarHeight = 112;  // barre de contrôle sous la façade (contrôles, état, aide)
+constexpr int kBarHeight = 148;  // barre de contrôle sous la façade (presets, état, apprentissage et gamme, aide)
 constexpr int kTotalHeight = kHeight + kBarHeight;
 
 // Dessine le capuchon argenté des potards par-dessus celui de la photo.
@@ -61,6 +61,11 @@ public:
     // Ce que l'utilisateur est en train de régler : sert à afficher l'aide contextuelle
     maq::HelpContext helpContext() const;
 
+    // Apprentissage au clavier (commandé par la barre)
+    void setLearn(bool on);
+    void learnPause();
+    void learnSkip();
+
 private:
     enum class Menu { None, Event, Channel, FirstLast, Prescale, Mode, SingleStep, Preset };
 
@@ -70,6 +75,10 @@ private:
     void toggleMuteOfSelectedStep();
     void pressEnter();  // START/STOP dans le menu PRESET
     void flash(const std::string& threeChars);
+    void handleLearnNote(const MaqProcessor::NoteIn& n);
+    void advanceLearn();
+    void setPotValue(int row, int step, int value);
+    void setMuteValue(int row, int step, bool muted);
 
     int getInt(const juce::String& id) const;
     bool getBool(const juce::String& id) const;
@@ -104,6 +113,11 @@ private:
     int singleRow_ = -1;    // SINGLE STEP : -1 = global, 0..2 = une rangée
     int selStep_ = 0;       // SINGLE STEP : pas sélectionné
     bool storeMode_ = false;  // PRESET : second appui = enregistrement (les 8 LED s'allument)
+    bool learnOn_ = false;    // apprentissage au clavier
+    int learnRow_ = 0;        // curseur d'apprentissage
+    int learnStep_ = 0;
+    int learnRef_ = -1;       // première note jouée (rangées de notes relatives)
+    bool snapping_ = false;   // évite de se rappeler soi-même pendant le verrouillage de gamme
 
     std::string msgText_;           // message de 3 caractères affiché brièvement
     juce::uint32 msgUntil_ = 0;
@@ -126,6 +140,12 @@ public:
     void resized() override;
 
     void setHelpSource(std::function<maq::HelpContext()> source) { helpSource_ = std::move(source); }
+    void setLearnCallbacks(std::function<void(bool)> onLearn, std::function<void()> onPause,
+                           std::function<void()> onSkip) {
+        onLearn_ = std::move(onLearn);
+        onPause_ = std::move(onPause);
+        onSkip_ = std::move(onSkip);
+    }
 
 private:
     void timerCallback() override;
@@ -139,6 +159,9 @@ private:
     void chooseFolder(maq::FolderPurpose purpose, const juce::String& title);
     void showManualMenu();
     void chooseManual();
+    void fillScaleBoxes();
+    void syncScaleBoxes();
+    void setChoiceParam(const juce::String& id, int index);
 
     MaqProcessor& proc_;
     juce::LookAndFeel_V4 lnf_;
@@ -146,12 +169,18 @@ private:
     juce::TextButton notesBtn_, frBtn_, prevBtn_, nextBtn_, storeBtn_, recallBtn_;
     juce::TextButton importBtn_, exportBtn_, importDirBtn_, exportDirBtn_;
     juce::TextButton panicBtn_, manualBtn_, langBtn_;
+    juce::TextButton learnBtn_, pauseBtn_, skipBtn_;
+    juce::ComboBox rootBox_, typeBox_, modeBox_;
+    juce::Label scaleLabel_;
     juce::ToggleButton keepSameBtn_;
     juce::Label titleLabel_, presetLabel_, statusLabel_, helpLabel_;
     juce::TextEditor nameEditor_;
     std::unique_ptr<juce::ButtonParameterAttachment> notesAttach_, frAttach_;
     std::unique_ptr<juce::FileChooser> chooser_;
     std::function<maq::HelpContext()> helpSource_;
+    std::function<void(bool)> onLearn_;
+    std::function<void()> onPause_, onSkip_;
+    bool shownFrNames_ = true;
 
     int shownSlot_ = -1;
     bool shownUsed_ = false;
