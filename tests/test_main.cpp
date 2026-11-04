@@ -363,7 +363,7 @@ static void testScales() {
     CHECK(quantizeNoteInRange(49, 36, 48, 0, 1) == 48);   // 49 est hors plage : on reste dans 36..48
     CHECK(quantizeNoteInRange(37, 36, 48, 0, 1) == 36);
     // noms
-    CHECK(scaleName(1, Lang::English) == "Major" && scaleName(6, Lang::French) == "Phrygien");
+    CHECK(scaleName(1, Lang::English) == "Major / Ionian" && scaleName(6, Lang::French) == "Phrygien");
     CHECK(pitchClassName(1, false) == "C#" && pitchClassName(3, true) == "R\xC3\xA9#" && pitchClassName(13, false) == "C#");
     for (int t = 0; t < kScaleCount; ++t) CHECK(!scaleName(t, Lang::French).empty() && scaleMask(t) != 0);
 }
@@ -457,6 +457,44 @@ static void testOutputQuantize() {
         auto on = noteOns(run(a, 4));
         CHECK((on == std::vector<int>{37, 39, 42, 36}));
     }
+}
+
+
+static void testScaleCatalogue() {
+    CHECK(kScaleCount == 70 && kScaleCategoryCount == 8);
+    // toutes les gammes sont valides, distinctes, contiennent la fondamentale ; les index 0..14 sont inchangés
+    for (int t = 0; t < kScaleCount; ++t) {
+        CHECK((scaleMask(t) & 1u) != 0);
+        CHECK(!scaleName(t, Lang::French).empty() && !scaleName(t, Lang::English).empty());
+        CHECK(scaleCategory(t) >= 0 && scaleCategory(t) < kScaleCategoryCount);
+        for (int u = t + 1; u < kScaleCount; ++u) CHECK(scaleMask(t) != scaleMask(u));
+    }
+    for (int c = 0; c < kScaleCategoryCount; ++c) CHECK(!scaleCategoryName(c, Lang::French).empty());
+    CHECK(scaleMask(0) == 0xFFFu);
+    CHECK(inScale(62, 0, 4) && inScale(63, 0, 4) && inScale(71, 0, 4) && !inScale(61, 0, 4) && !inScale(70, 0, 4));  // mineure mélodique : Do Ré Mib Fa Sol La Si
+    // quelques gammes du catalogue
+    auto notes = [](int type) { std::vector<int> v; for (int i = 0; i < 12; ++i) if (scaleMask(type) & (1u << i)) v.push_back(i); return v; };
+    auto find = [](const char* en) {
+        for (int t = 0; t < kScaleCount; ++t)
+            if (scaleName(t, Lang::English).find(en) == 0) return t;
+        return -1;
+    };
+    CHECK((notes(find("Hirajoshi")) == std::vector<int>{0, 2, 3, 7, 8}));
+    CHECK((notes(find("Hungarian Major")) == std::vector<int>{0, 3, 4, 6, 7, 9, 10}));
+    CHECK((notes(find("Phrygian Dominant")) == std::vector<int>{0, 1, 4, 5, 7, 8, 10}));
+    CHECK((notes(find("Double Harmonic Major")) == std::vector<int>{0, 1, 4, 5, 7, 8, 11}));
+    CHECK((notes(find("Bebop Dominant")) == std::vector<int>{0, 2, 4, 5, 7, 9, 10, 11}));
+    CHECK((notes(find("Six Tone")) == std::vector<int>{0, 1, 4, 5, 8, 9}));
+    CHECK((notes(find("Persian")) == std::vector<int>{0, 1, 4, 5, 6, 8, 11}));
+    CHECK((notes(find("Kumoi")) == std::vector<int>{0, 2, 3, 7, 9}));
+    CHECK((notes(find("Pentatonic Dominant")) == std::vector<int>{0, 2, 4, 7, 10}));
+    CHECK((notes(find("Altered")) == std::vector<int>{0, 1, 3, 4, 6, 8, 10}));
+    CHECK(find("Todi") >= 60 && scaleName(find("Todi"), Lang::English).find("approx.") != std::string::npos);
+    // la quantification fonctionne avec les nouvelles gammes (Hirajoshi en Do : Do Ré Mib Sol Lab)
+    const int hira = find("Hirajoshi");
+    CHECK(quantizeNote(65, 0, hira) == 63 || quantizeNote(65, 0, hira) == 67);   // Fa -> Mib ou Sol (à égalité : la plus grave)
+    CHECK(quantizeNote(65, 0, hira) == 63);
+    CHECK(quantizeNote(70, 0, hira) == 68);   // Sib -> Lab
 }
 
 static fs::path tempDir(const char* name) {
@@ -580,6 +618,7 @@ int main() {
     testStringsAndHelp();
     testPreferences();
     testScales();
+    testScaleCatalogue();
     testPotConversions();
     testLearn();
     testOutputQuantize();

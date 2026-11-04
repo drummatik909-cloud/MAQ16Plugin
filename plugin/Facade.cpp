@@ -862,8 +862,8 @@ void ControlBar::resized() {
     skipBtn_.setBounds(222, 76, 70, 28);
     scaleLabel_.setBounds(310, 76, 60, 28);
     rootBox_.setBounds(376, 76, 74, 28);
-    typeBox_.setBounds(456, 76, 220, 28);
-    modeBox_.setBounds(682, 76, 200, 28);
+    typeBox_.setBounds(456, 76, 330, 28);
+    modeBox_.setBounds(792, 76, 200, 28);
     // Ligne 4 : aide contextuelle (deux lignes)
     helpLabel_.setBounds(20, 112, 1330, 34);
 }
@@ -933,7 +933,11 @@ void ControlBar::fillScaleBoxes() {
     rootBox_.clear(dontSendNotification);
     for (int pc = 0; pc < 12; ++pc) rootBox_.addItem(S(maq::pitchClassName(pc, french)), pc + 1);
     typeBox_.clear(dontSendNotification);
-    for (int t = 0; t < maq::kScaleCount; ++t) typeBox_.addItem(S(maq::scaleName(t, lang())), t + 1);
+    for (int c = 0; c < maq::kScaleCategoryCount; ++c) {  // menu groupé par catégories du catalogue
+        typeBox_.addSectionHeading(S(maq::scaleCategoryName(c, lang())));
+        for (int t = 0; t < maq::kScaleCount; ++t)
+            if (maq::scaleCategory(t) == c) typeBox_.addItem(S(maq::scaleName(t, lang())), t + 1);
+    }
     modeBox_.clear(dontSendNotification);
     modeBox_.addItem(S(maq::tr(maq::Str::ScaleOff, lang())), 1);
     modeBox_.addItem(S(maq::tr(maq::Str::ScaleLock, lang())), 2);

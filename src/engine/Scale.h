@@ -6,22 +6,27 @@
 
 namespace maq {
 
-constexpr int kScaleCount = 15;
+constexpr int kScaleCount = 70;
+constexpr int kScaleCategoryCount = 8;
 
 // Modes de la gamme : 0 = aucune, 1 = verrouillage (potards et notes apprises), 2 = quantification en sortie
 constexpr int kScaleModeOff = 0;
 constexpr int kScaleModeLock = 1;
 constexpr int kScaleModeOutput = 2;
 
-// type : 0 chromatique, 1 majeure, 2 mineure naturelle, 3 mineure harmonique, 4 mineure mélodique,
-//        5 dorien, 6 phrygien, 7 lydien, 8 mixolydien, 9 locrien, 10 pentatonique majeure,
-//        11 pentatonique mineure, 12 blues, 13 ton entier, 14 diminuée
+// type : 0..14 = les 15 premières gammes (chromatique, majeure, mineures, modes, pentatoniques, blues, ton entier,
+//        diminuée) ; 15..59 = 45 gammes du catalogue Scaler 3 ; 60..64 = 5 gammes aux intervalles corrigés ;
+//        65..69 = 5 gammes en version approchée à 12 notes. Les index 0..14 ne changent jamais (projets existants).
+// catégories : 0 chromatique, 1 diatoniques & modes, 2 modes du mineur harmonique, 3 modes du mineur mélodique,
+//        4 modes du majeur harmonique, 5 pentatoniques & blues, 6 symétriques & bebop, 7 exotiques & monde
 unsigned scaleMask(int type);                          // 12 bits : intervalles autorisés à partir de la fondamentale
 bool inScale(int midiNote, int root, int type);        // root : 0 = Do ... 11 = Si
 int quantizeNote(int midiNote, int root, int type);    // note de la gamme la plus proche (à égalité : la plus grave)
 int quantizeNoteInRange(int midiNote, int lo, int hi, int root, int type);  // idem, sans sortir de [lo, hi]
 
 std::string scaleName(int type, Lang lang);
+int scaleCategory(int type);                                  // 0..7
+std::string scaleCategoryName(int category, Lang lang);
 std::string pitchClassName(int pitchClass, bool french);  // "C#" ou "Do#"
 
 // Note -> position de potard (inverse de noteFromPot / noteOffsetFromPot). -1 si hors plage.

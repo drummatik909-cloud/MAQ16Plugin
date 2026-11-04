@@ -8,31 +8,90 @@ namespace maq {
 
 namespace {
 
+constexpr unsigned bit(int n) { return 1u << n; }
+
 struct ScaleInfo {
     const char* fr;
     const char* en;
     unsigned mask;
+    int category;
 };
-
-constexpr unsigned bit(int n) { return 1u << n; }
 
 const ScaleInfo kScales[kScaleCount] = {
-    {"Chromatique", "Chromatic", 0xFFFu},
-    {"Majeure", "Major", bit(0) | bit(2) | bit(4) | bit(5) | bit(7) | bit(9) | bit(11)},
-    {"Mineure naturelle", "Natural minor", bit(0) | bit(2) | bit(3) | bit(5) | bit(7) | bit(8) | bit(10)},
-    {"Mineure harmonique", "Harmonic minor", bit(0) | bit(2) | bit(3) | bit(5) | bit(7) | bit(8) | bit(11)},
-    {"Mineure mélodique", "Melodic minor", bit(0) | bit(2) | bit(3) | bit(5) | bit(7) | bit(9) | bit(11)},
-    {"Dorien", "Dorian", bit(0) | bit(2) | bit(3) | bit(5) | bit(7) | bit(9) | bit(10)},
-    {"Phrygien", "Phrygian", bit(0) | bit(1) | bit(3) | bit(5) | bit(7) | bit(8) | bit(10)},
-    {"Lydien", "Lydian", bit(0) | bit(2) | bit(4) | bit(6) | bit(7) | bit(9) | bit(11)},
-    {"Mixolydien", "Mixolydian", bit(0) | bit(2) | bit(4) | bit(5) | bit(7) | bit(9) | bit(10)},
-    {"Locrien", "Locrian", bit(0) | bit(1) | bit(3) | bit(5) | bit(6) | bit(8) | bit(10)},
-    {"Pentatonique majeure", "Major pentatonic", bit(0) | bit(2) | bit(4) | bit(7) | bit(9)},
-    {"Pentatonique mineure", "Minor pentatonic", bit(0) | bit(3) | bit(5) | bit(7) | bit(10)},
-    {"Blues", "Blues", bit(0) | bit(3) | bit(5) | bit(6) | bit(7) | bit(10)},
-    {"Ton entier", "Whole tone", bit(0) | bit(2) | bit(4) | bit(6) | bit(8) | bit(10)},
-    {"Diminuée", "Diminished", bit(0) | bit(1) | bit(3) | bit(4) | bit(6) | bit(7) | bit(9) | bit(10)},
+    {"Chromatique", "Chromatic", 0xFFFu, 0},  // 0
+    {"Majeure / Ionien", "Major / Ionian", 0xAB5u, 1},  // 1
+    {"Mineure naturelle / Éolien", "Natural minor / Aeolian", 0x5ADu, 1},  // 2
+    {"Mineure harmonique / Mohammedan", "Harmonic minor / Mohammedan", 0x9ADu, 2},  // 3
+    {"Mineure mélodique / Jazz minor / Hawaiian", "Melodic minor / Jazz minor / Hawaiian", 0xAADu, 3},  // 4
+    {"Dorien / Kafi raga", "Dorian / Kafi raga", 0x6ADu, 1},  // 5
+    {"Phrygien", "Phrygian", 0x5ABu, 1},  // 6
+    {"Lydien", "Lydian", 0xAD5u, 1},  // 7
+    {"Mixolydien", "Mixolydian", 0x6B5u, 1},  // 8
+    {"Locrien", "Locrian", 0x56Bu, 1},  // 9
+    {"Pentatonique majeure / Ritusen / Chinese Major", "Major pentatonic / Ritusen / Chinese Major", 0x295u, 5},  // 10
+    {"Pentatonique mineure / Man Gong / Yo", "Minor pentatonic / Man Gong / Yo", 0x4A9u, 5},  // 11
+    {"Blues / Blues mineur", "Blues / Blues minor", 0x4E9u, 5},  // 12
+    {"Ton entier", "Whole tone", 0x555u, 6},  // 13
+    {"Diminuée (demi-ton / ton)", "Diminished (half-whole)", 0x6DBu, 6},  // 14
+    {"Locrien 6 naturel", "Locrian nat6", 0x66Bu, 2},  // 15
+    {"Ionien augmenté (Ionien #5)", "Ionian Augmented (Ionian #5)", 0xB35u, 2},  // 16
+    {"Dorien #4 / Mineur roumain / Zilofi", "Dorian #4 / Romanian Minor / Zilofi", 0x6CDu, 2},  // 17
+    {"Phrygien dominant / Spanish Gypsy / Flamenco", "Phrygian Dominant / Spanish Gypsy / Flamenco", 0x5B3u, 2},  // 18
+    {"Lydien #2", "Lydian #2", 0xAD9u, 2},  // 19
+    {"Ultralocrien / Altéré bb7", "Ultralocrian / Altered bb7", 0x35Bu, 2},  // 20
+    {"Dorien b2 / Phrygien 6 naturel / Javanese", "Dorian b2 / Phrygian nat6 / Javanese", 0x6ABu, 3},  // 21
+    {"Lydien augmenté", "Lydian Augmented", 0xB55u, 3},  // 22
+    {"Lydien dominant / Overtone / Podolian", "Lydian Dominant / Overtone / Podolian", 0x6D5u, 3},  // 23
+    {"Mixolydien b6 / Hindu", "Mixolydian b6 / Hindu", 0x5B5u, 3},  // 24
+    {"Locrien 2 naturel / Semi-diminué", "Locrian nat2 / Half-Diminished", 0x56Du, 3},  // 25
+    {"Altérée / Super Locrien", "Altered / Super Locrian", 0x55Bu, 3},  // 26
+    {"Majeure harmonique", "Harmonic Major", 0x9B5u, 4},  // 27
+    {"Dorien b5", "Dorian b5", 0x66Du, 4},  // 28
+    {"Phrygien b4", "Phrygian b4", 0x59Bu, 4},  // 29
+    {"Lydien mineur / Lydien b3", "Lydian Minor / Lydian b3", 0xACDu, 4},  // 30
+    {"Mixolydien b2", "Mixolydian b2", 0x6B3u, 4},  // 31
+    {"Lydien augmenté #2", "Lydian Augmented #2", 0xB59u, 4},  // 32
+    {"Locrien b7", "Locrian b7", 0x36Bu, 4},  // 33
+    {"Pentatonique égyptienne / Egyptian", "Pentatonic Egyptian / Egyptian", 0x4A5u, 5},  // 34
+    {"Pentatonique mineure 6te", "Pentatonic Minor 6th", 0x2A9u, 5},  // 35
+    {"Blues majeur", "Blues Major", 0x29Du, 5},  // 36
+    {"Diminuée (ton / demi-ton)", "Diminished (whole-half)", 0xB6Du, 6},  // 37
+    {"Bebop majeur", "Bebop Major", 0xBB5u, 6},  // 38
+    {"Bebop mineur", "Bebop Minor", 0xB5Du, 6},  // 39
+    {"Bebop dominant / Dominant Bebop", "Bebop Dominant / Dominant Bebop", 0xEB5u, 6},  // 40
+    {"Bebop dorien", "Bebop Dorian", 0x6EDu, 6},  // 41
+    {"Gamme augmentée", "Augmented Scale", 0x999u, 6},  // 42
+    {"Double harmonique majeure / Byzantine / Bhairav", "Double Harmonic Major / Byzantine / Bhairav", 0x9B3u, 7},  // 43
+    {"Double harmonique mineure / Gypsy", "Double Harmonic Minor / Gypsy", 0x9CDu, 7},  // 44
+    {"Orientale", "Oriental", 0x673u, 7},  // 45
+    {"Iwato (Japon)", "Iwato (Japan)", 0x463u, 7},  // 46
+    {"In Sen (Japon)", "In Sen (Japan)", 0x4A3u, 7},  // 47
+    {"Hirajoshi (Japon)", "Hirajoshi (Japan)", 0x18Du, 7},  // 48
+    {"Hongroise majeure", "Hungarian Major", 0x6D9u, 7},  // 49
+    {"Napolitaine majeure", "Neapolitan Major", 0xAABu, 7},  // 50
+    {"Napolitaine mineure", "Neapolitan Minor", 0x9ABu, 7},  // 51
+    {"Énigmatique / Verdi", "Enigmatic / Verdi", 0xD53u, 7},  // 52
+    {"Prométhée (Scriabine)", "Prometheus (Scriabin)", 0x655u, 7},  // 53
+    {"Prométhée napolitaine", "Prometheus Neapolitan", 0x353u, 7},  // 54
+    {"Ton entier avec sensible", "Leading Whole Tone", 0xD55u, 7},  // 55
+    {"Arabe", "Arabian", 0x575u, 7},  // 56
+    {"Dorien chromatique", "Chromatic Dorian", 0x6B9u, 7},  // 57
+    {"Phrygien mauresque", "Moorish Phrygian", 0x4D7u, 7},  // 58
+    {"Symétrique à six sons", "Six Tone Symmetrical", 0x333u, 7},  // 59
+    {"Pentatonique dominante (corrigée)", "Pentatonic Dominant (corrected)", 0x495u, 5},  // 60
+    {"Persane (corrigée)", "Persian (corrected)", 0x973u, 7},  // 61
+    {"Kumoi (Japon, corrigée)", "Kumoi (Japan, corrected)", 0x28Du, 7},  // 62
+    {"Espagnole à 8 notes (corrigée)", "Spanish 8-Note (corrected)", 0x57Bu, 7},  // 63
+    {"Balinaise (corrigée)", "Balinese (corrected)", 0x18Bu, 7},  // 64
+    {"Raga Todi (approx.)", "Todi raga (approx.)", 0x9CBu, 7},  // 65
+    {"Raga Marva (approx.)", "Marva raga (approx.)", 0xAD3u, 7},  // 66
+    {"Raga Purvi (approx.)", "Purvi raga (approx.)", 0x9D3u, 7},  // 67
+    {"Algérienne (approx.)", "Algerian (approx.)", 0x9EDu, 7},  // 68
+    {"In (approx.)", "In (approx.)", 0x1A3u, 7},  // 69
 };
+
+const char* const kCategoryFr[kScaleCategoryCount] = {"Chromatique", "Diatoniques & modes", "Modes du mineur harmonique", "Modes du mineur mélodique", "Modes du majeur harmonique", "Pentatoniques & blues", "Symétriques & bebop", "Exotiques & monde"};
+const char* const kCategoryEn[kScaleCategoryCount] = {"Chromatic", "Diatonic & modes", "Harmonic minor modes", "Melodic minor modes", "Harmonic major modes", "Pentatonic & blues", "Symmetric & bebop", "Exotic & world"};
 
 int clampType(int type) { return std::max(0, std::min(kScaleCount - 1, type)); }
 int mod12(int v) { return ((v % 12) + 12) % 12; }
@@ -77,6 +136,13 @@ int quantizeNoteInRange(int midiNote, int lo, int hi, int root, int type) {
 std::string scaleName(int type, Lang lang) {
     const ScaleInfo& s = kScales[clampType(type)];
     return lang == Lang::French ? s.fr : s.en;
+}
+
+int scaleCategory(int type) { return kScales[clampType(type)].category; }
+
+std::string scaleCategoryName(int category, Lang lang) {
+    const int c = std::max(0, std::min(kScaleCategoryCount - 1, category));
+    return lang == Lang::French ? kCategoryFr[c] : kCategoryEn[c];
 }
 
 std::string pitchClassName(int pitchClass, bool french) {
