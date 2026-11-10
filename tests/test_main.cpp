@@ -4,7 +4,9 @@
 #include <fstream>
 #include <vector>
 #include "engine/Unit.h"
+#include "engine/Capture.h"
 #include "engine/Events.h"
+#include "engine/MidiExport.h"
 #include "engine/Scale.h"
 #include "presets/Bank.h"
 #include "presets/FolderSettings.h"
@@ -497,6 +499,150 @@ static void testScaleCatalogue() {
     CHECK(quantizeNote(70, 0, hira) == 68);   // Sib -> Lab
 }
 
+
+// ---- Lecture minimale d'un fichier MIDI pour vérifier ce qu'on écrit
+struct SmfEvent { long tick; int status; int d1; int d2; };
+struct SmfTrack { std::vector<SmfEvent> events; long tempo = 0; long endTick = 0; std::string name; };
+struct Smf { bool ok = false; int format = -1, ntrks = 0, division = 0; std::vector<SmfTrack> tracks; };
+
+static Smf parseSmf(const std::vector<std::uint8_t>& d) {
+    Smf f;
+    size_t p = 0;
+    auto u32 = [&]() { unsigned v = 0; for (int i = 0; i < 4; ++i) v = (v << 8) | d[p++]; return v; };
+    auto u16 = [&]() { unsigned v = (d[p] << 8) | d[p + 1]; p += 2; return v; };
+    if (d.size() < 14 || d[0] != 'M' || d[1] != 'T' || d[2] != 'h' || d[3] != 'd') return f;
+    p = 4;
+    if (u32() != 6) return f;
+    f.format = static_cast<int>(u16());
+    f.ntrks = static_cast<int>(u16());
+    f.division = static_cast<int>(u16());
+    for (int t = 0; t < f.ntrks; ++t) {
+        if (p + 8 > d.size() || d[p] != 'M' || d[p + 1] != 'T' || d[p + 2] != 'r' || d[p + 3] != 'k') return f;
+        p += 4;
+        const size_t len = u32();
+        const size_t end = p + len;
+        if (end > d.size()) return f;
+        SmfTrack tr;
+        long tick = 0;
+        int running = 0;
+        while (p < end) {
+            unsigned delta = 0; std::uint8_t b;
+            do { b = d[p++]; delta = (delta << 7) | (b & 0x7F); } while (b & 0x80);
+            tick += delta;
+            int status = d[p];
+            if (status == 0xFF) {
+                ++p;
+                const int type = d[p++];
+                const size_t mlen = d[p++];
+                if (type == 0x51 && mlen == 3) tr.tempo = (d[p] << 16) | (d[p + 1] << 8) | d[p + 2];
+                if (type == 0x03) tr.name.assign(d.begin() + p, d.begin() + p + mlen);
+                if (type == 0x2F) tr.endTick = tick;
+                p += mlen;
+            } else {
+                if (status & 0x80) { running = status; ++p; } else status = running;
+                const int hi = status & 0xF0;
+                const int n = (hi == 0xC0 || hi == 0xD0) ? 1 : 2;
+                SmfEvent e{tick, status, d[p], n == 2 ? d[p + 1] : 0};
+                p += static_cast<size_t>(n);
+                tr.events.push_back(e);
+            }
+        }
+        f.tracks.push_back(tr);
+    }
+    f.ok = (p == d.size());
+    return f;
+}
+
+static void testCapture() {
+    CaptureBuffer cb;
+    for (int c = 0; c < 100; ++c) {
+        cb.push(c, MidiMsg{MidiMsg::Type::NoteOn, 0, 40 + (c % 10), 100, 0});
+        cb.setLastClock(c);
+    }
+    auto w = cb.window(10);                       // horloges 89..99
+    CHECK(!w.empty() && w.front().clock >= 0 && w.back().clock <= 10);
+    CHECK(w.size() == 11);
+    CHECK(cb.window(1000).size() == 100);
+    // dépassement de capacité : on garde les plus récents
+    CaptureBuffer big;
+    for (int c = 0; c < static_cast<int>(CaptureBuffer::kCapacity) + 500; ++c) {
+        big.push(c, MidiMsg{MidiMsg::Type::NoteOn, 0, 60, 100, 0});
+        big.setLastClock(c);
+    }
+    CHECK(big.window(100).size() == 101);
+    big.clear();
+    CHECK(big.window(100).empty());
+}
+
+static void testRowIdsAndLengths() {
+    Unit u;
+    for (int r = 1; r < 3; ++r) u.rows[static_cast<size_t>(r)].event.kind = EventKind::Off;
+    auto evs = run(u, 7);
+    CHECK(!evs.empty());
+    for (const auto& e : evs) CHECK(e.m.row == 0);
+
+    std::array<RowConfig, kRows> rows{};
+    rows[0].event.kind = EventKind::NoteAbs; rows[0].first = 1; rows[0].last = 16; rows[0].gate = 6;   // 96
+    rows[1].event.kind = EventKind::NoteAbs; rows[1].first = 1; rows[1].last = 3;  rows[1].gate = 6;   // 18
+    rows[2].event.kind = EventKind::Off;
+    CHECK(rowPeriodClocks(rows[0]) == 96 && rowPeriodClocks(rows[1]) == 18 && rowPeriodClocks(rows[2]) == 0);
+    CHECK(loopLengthClocks(rows) == 96);
+    CHECK(cycleLengthClocks(rows, 100000) == 288);      // PPCM de 96 et 18
+    CHECK(cycleLengthClocks(rows, 200) == 200);         // plafonné
+    rows[0].mode = PlayMode::Pendulum1;  CHECK(rowPeriodClocks(rows[0]) == 192);
+    rows[0].mode = PlayMode::Pendulum2;  CHECK(rowPeriodClocks(rows[0]) == 180);   // (2*16-2)*6
+    rows[0].mode = PlayMode::OneEvent;   CHECK(rowPeriodClocks(rows[0]) == 6);
+    std::array<RowConfig, kRows> none{};
+    for (auto& r : none) r.event.kind = EventKind::Off;
+    CHECK(loopLengthClocks(none) == kClocksPerBar && cycleLengthClocks(none, 1000) == kClocksPerBar);
+}
+
+static void testRenderAndMidiFile() {
+    Unit u;
+    u.rows[1].event.kind = EventKind::Off;
+    u.rows[2].event.kind = EventKind::Off;
+    for (int i = 0; i < 16; ++i) u.rows[0].pot[static_cast<size_t>(i)] = i * 8;
+    auto a = renderLoop(u, 96), b = renderLoop(u, 96);
+    CHECK(a.size() == b.size());
+    int ons = 0, offs = 0;
+    for (const auto& e : a) { if (e.msg.type == MidiMsg::Type::NoteOn) ++ons; if (e.msg.type == MidiMsg::Type::NoteOff) ++offs; }
+    CHECK(ons == 16 && offs == 16);                    // toutes les notes sont fermées
+
+    auto file = buildMidiFile(a, 120.0, 0x7, 96);
+    Smf f = parseSmf(file);
+    CHECK(f.ok && f.format == 1 && f.division == 480);
+    CHECK(f.ntrks == 4);                               // tempo + 3 rangées
+    CHECK(f.tracks[0].tempo == 500000);                // 120 BPM
+    CHECK(f.tracks[1].name == "Row 1");
+    int fileOns = 0; bool grid = true;
+    for (const auto& e : f.tracks[1].events)
+        if ((e.status & 0xF0) == 0x90) { ++fileOns; if (e.tick % 120 != 0) grid = false; }   // 6 horloges = 120 ticks
+    CHECK(fileOns == 16 && grid);
+    CHECK(f.tracks[1].endTick == 96 * 20);
+    CHECK(f.tracks[2].events.empty() && f.tracks[3].events.empty());
+
+    // masque de rangées : une seule piste en plus du tempo
+    auto one = parseSmf(buildMidiFile(a, 90.0, 0x1, 96));
+    CHECK(one.ok && one.ntrks == 2 && one.tracks[0].tempo == 666667);
+
+    // Note Off orphelin écarté, note ouverte fermée à la fin, Pitch Bend codé sur 14 bits
+    std::vector<CapturedEvent> ev;
+    ev.push_back({2, MidiMsg{MidiMsg::Type::NoteOff, 0, 50, 0, 0}});           // orphelin
+    ev.push_back({4, MidiMsg{MidiMsg::Type::NoteOn, 0, 52, 90, 0}});           // jamais fermée
+    ev.push_back({6, MidiMsg{MidiMsg::Type::PitchBend, 1, 8192, 0, 0}});
+    ev.push_back({8, MidiMsg{MidiMsg::Type::ControlChange, 1, 74, 99, 0}});
+    ev.push_back({9, MidiMsg{MidiMsg::Type::ControlChange, 0, 123, 0, -1}});   // sans rangée : ignoré
+    auto g = parseSmf(buildMidiFile(ev, 120.0, 0x1, 12));
+    CHECK(g.ok && g.ntrks == 2);
+    int offsSeen = 0, noteOnSeen = 0, bendOk = 0, ccOk = 0, ccCount = 0;
+    for (const auto& e : g.tracks[1].events) {
+        if ((e.status & 0xF0) == 0x80) { ++offsSeen; if (e.d1 == 52 && e.tick == 12 * 20) ++noteOnSeen; }
+        if ((e.status & 0xF0) == 0xE0 && e.d1 == 0 && e.d2 == 64) ++bendOk;     // 8192 = 0x40 0x00
+        if ((e.status & 0xF0) == 0xB0) { ++ccCount; if (e.d1 == 74 && e.d2 == 99) ++ccOk; }
+    }
+    CHECK(offsSeen == 1 && noteOnSeen == 1 && bendOk == 1 && ccOk == 1 && ccCount == 1);
+}
+
 static fs::path tempDir(const char* name) {
     fs::path d = fs::temp_directory_path() / name;
     std::error_code ec;
@@ -622,6 +768,9 @@ int main() {
     testPotConversions();
     testLearn();
     testOutputQuantize();
+    testCapture();
+    testRowIdsAndLengths();
+    testRenderAndMidiFile();
     std::printf("%d verifications, %d echec(s)\n", g_checks, g_fail);
     return g_fail == 0 ? 0 : 1;
 }

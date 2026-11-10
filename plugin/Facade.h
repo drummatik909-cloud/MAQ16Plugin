@@ -13,7 +13,7 @@ namespace maqui {
 
 constexpr int kWidth = 1369;    // taille de l'image de la façade
 constexpr int kHeight = 502;
-constexpr int kBarHeight = 148;  // barre de contrôle sous la façade (presets, état, apprentissage et gamme, aide)
+constexpr int kBarHeight = 184;  // barre de contrôle sous la façade (presets, état, apprentissage et gamme, export MIDI, aide)
 constexpr int kTotalHeight = kHeight + kBarHeight;
 
 // Dessine le capuchon argenté des potards par-dessus celui de la photo.
@@ -50,6 +50,20 @@ private:
     float dragAcc_ = 0.0f;
     float wheelAcc_ = 0.0f;
     int lastY_ = 0;
+};
+
+// Zone à saisir et à glisser vers Bitwig : fabrique un fichier .mid et le fait glisser hors de la fenêtre.
+class MidiDragHandle : public juce::Component {
+public:
+    std::function<juce::File()> makeFile;  // crée le .mid temporaire ; File() s'il n'y a rien à exporter
+    std::function<void()> onNothing;       // appelé quand il n'y a rien à glisser
+    juce::String text;
+    void paint(juce::Graphics&) override;
+    void mouseDown(const juce::MouseEvent&) override { dragStarted_ = false; }
+    void mouseDrag(const juce::MouseEvent&) override;
+
+private:
+    bool dragStarted_ = false;
 };
 
 class Facade : public juce::Component, private juce::Timer {
@@ -161,6 +175,10 @@ private:
     void chooseManual();
     void fillScaleBoxes();
     void syncScaleBoxes();
+    void fillMidiBoxes();
+    void fillLengthBox(bool resetSelection);
+    void doExportMidi();
+    juce::String midiFileName() const;
     void setChoiceParam(const juce::String& id, int index);
 
     MaqProcessor& proc_;
@@ -170,6 +188,11 @@ private:
     juce::TextButton importBtn_, exportBtn_, importDirBtn_, exportDirBtn_;
     juce::TextButton panicBtn_, manualBtn_, langBtn_;
     juce::TextButton learnBtn_, pauseBtn_, skipBtn_;
+    juce::TextButton followBtn_, exportMidiBtn_;
+    juce::ComboBox sourceBox_, lengthBox_, scopeBox_;
+    juce::Label midiLabel_;
+    MidiDragHandle dragHandle_;
+    std::unique_ptr<juce::ButtonParameterAttachment> followAttach_;
     juce::ComboBox rootBox_, typeBox_, modeBox_;
     juce::Label scaleLabel_;
     juce::ToggleButton keepSameBtn_;

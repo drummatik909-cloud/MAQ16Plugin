@@ -196,6 +196,27 @@ void DataEncoder::mouseWheelMove(const MouseEvent&, const MouseWheelDetails& whe
     while (wheelAcc_ <= -1.0f) { step(-1); wheelAcc_ += 1.0f; }
 }
 
+// ---------------------------------------------------------------- Glisser le MIDI
+
+void MidiDragHandle::paint(Graphics& g) {
+    const auto r = getLocalBounds().toFloat().reduced(1.0f);
+    g.setColour(Colour(0xff22344e));
+    g.fillRoundedRectangle(r, 4.0f);
+    g.setColour(Colour(0xff5b82b8));
+    g.drawRoundedRectangle(r, 4.0f, 1.2f);
+    g.setColour(Colours::white);
+    g.setFont(g.getCurrentFont().withHeight(15.0f));
+    g.drawText(text, getLocalBounds(), Justification::centred, true);
+}
+
+void MidiDragHandle::mouseDrag(const MouseEvent& e) {
+    if (dragStarted_ || e.getDistanceFromDragStart() < 4) return;
+    dragStarted_ = true;
+    const File f = makeFile ? makeFile() : File();
+    if (f.existsAsFile()) DragAndDropContainer::performExternalDragDropOfFiles(StringArray(f.getFullPathName()), false, this);
+    else if (onNothing) onNothing();
+}
+
 // ---------------------------------------------------------------- Façade
 
 Rectangle<int> Facade::stepLedRect(int row, int step) {
@@ -775,6 +796,31 @@ ControlBar::ControlBar(MaqProcessor& p) : proc_(p) {
     typeBox_.onChange = [this] { setChoiceParam("scaletype", typeBox_.getSelectedId() - 1); };
     modeBox_.onChange = [this] { setChoiceParam("scalemode", modeBox_.getSelectedId() - 1); };
     scaleLabel_.setJustificationType(Justification::centredRight);
+
+    // Suivi de la tonalité par MIDI (canal 16)
+    followBtn_.setClickingTogglesState(true);
+    followBtn_.setColour(TextButton::buttonOnColourId, Colour(0xffb02a1a));
+    if (auto* prm = proc_.apvts.getParameter("followkey"))
+        followAttach_ = std::make_unique<ButtonParameterAttachment>(*prm, followBtn_);
+    followBtn_.onClick = [this] {
+        setStatus(S(maq::tr(followBtn_.getToggleState() ? maq::Str::FollowKeyOn : maq::Str::FollowKeyOff, lang())));
+    };
+
+    // Export MIDI : boucle ou capture, glisser vers Bitwig ou enregistrer
+    midiLabel_.setJustificationType(Justification::centredRight);
+    sourceBox_.onChange = [this] { fillLengthBox(true); };
+    exportMidiBtn_.onClick = [this] { doExportMidi(); };
+    dragHandle_.makeFile = [this]() -> File {
+        const auto data = proc_.buildMidi(sourceBox_.getSelectedId() - 1, lengthBox_.getSelectedId() - 1,
+                                          scopeBox_.getSelectedId() - 1);
+        if (data.empty()) return File();
+        File dir = File::getSpecialLocation(File::tempDirectory).getChildFile("MAQ16");
+        dir.createDirectory();
+        File f = dir.getChildFile(midiFileName());
+        if (!f.replaceWithData(data.data(), data.size())) return File();
+        return f;
+    };
+    dragHandle_.onNothing = [this] { setStatus(S(maq::tr(maq::Str::MidiEmpty, lang()))); };
     langBtn_.onClick = [this] {
         proc_.prefs.language = (lang() == maq::Lang::French) ? maq::Lang::English : maq::Lang::French;
         proc_.savePreferences();
@@ -783,8 +829,13 @@ ControlBar::ControlBar(MaqProcessor& p) : proc_(p) {
 
     for (auto* b : {&notesBtn_, &frBtn_, &prevBtn_, &nextBtn_, &storeBtn_, &recallBtn_, &importBtn_, &exportBtn_,
                     &importDirBtn_, &exportDirBtn_, &panicBtn_, &manualBtn_, &langBtn_,
-                    &learnBtn_, &pauseBtn_, &skipBtn_})
+                    &learnBtn_, &pauseBtn_, &skipBtn_, &followBtn_, &exportMidiBtn_})
         addAndMakeVisible(*b);
+    addAndMakeVisible(midiLabel_);
+    addAndMakeVisible(sourceBox_);
+    addAndMakeVisible(lengthBox_);
+    addAndMakeVisible(scopeBox_);
+    addAndMakeVisible(dragHandle_);
     addAndMakeVisible(scaleLabel_);
     addAndMakeVisible(rootBox_);
     addAndMakeVisible(typeBox_);
@@ -822,7 +873,13 @@ void ControlBar::applyLanguage() {
     pauseBtn_.setButtonText(S(maq::tr(maq::Str::Pause, l)));
     skipBtn_.setButtonText(S(maq::tr(maq::Str::Skip, l)));
     scaleLabel_.setText(S(maq::tr(maq::Str::ScaleLabel, l)), dontSendNotification);
+    followBtn_.setButtonText(S(maq::tr(maq::Str::FollowKey, l)));
+    midiLabel_.setText(S(maq::tr(maq::Str::MidiLabel, l)), dontSendNotification);
+    exportMidiBtn_.setButtonText(S(maq::tr(maq::Str::ExportMidi, l)));
+    dragHandle_.text = S(maq::tr(maq::Str::DragMidi, l));
+    dragHandle_.repaint();
     fillScaleBoxes();
+    fillMidiBoxes();
     setStatus(String());
     shownSlot_ = -1;       // force la mise à jour du champ de nom
     shownHelp_ = String(); // et de l'aide
@@ -832,7 +889,7 @@ void ControlBar::paint(Graphics& g) {
     g.fillAll(Colour(0xff161616));
     g.setColour(Colour(0xff3a3a3a));
     g.drawHorizontalLine(0, 0.0f, static_cast<float>(getWidth()));
-    g.drawHorizontalLine(108, 20.0f, static_cast<float>(getWidth() - 20));
+    g.drawHorizontalLine(146, 20.0f, static_cast<float>(getWidth() - 20));
 }
 
 void ControlBar::resized() {
@@ -864,8 +921,16 @@ void ControlBar::resized() {
     rootBox_.setBounds(376, 76, 74, 28);
     typeBox_.setBounds(456, 76, 330, 28);
     modeBox_.setBounds(792, 76, 200, 28);
-    // Ligne 4 : aide contextuelle (deux lignes)
-    helpLabel_.setBounds(20, 112, 1330, 34);
+    followBtn_.setBounds(1000, 76, 150, 28);
+    // Ligne 4 : export MIDI
+    midiLabel_.setBounds(20, 112, 44, 28);
+    sourceBox_.setBounds(70, 112, 110, 28);
+    lengthBox_.setBounds(186, 112, 150, 28);
+    scopeBox_.setBounds(342, 112, 130, 28);
+    exportMidiBtn_.setBounds(482, 112, 130, 28);
+    dragHandle_.setBounds(622, 112, 200, 28);
+    // Ligne 5 : aide contextuelle (deux lignes)
+    helpLabel_.setBounds(20, 148, 1330, 34);
 }
 
 int ControlBar::selectedSlot() const {
@@ -949,10 +1014,80 @@ void ControlBar::syncScaleBoxes() {
     auto index = [this](const char* id) {
         return static_cast<int>(std::lround(proc_.apvts.getRawParameterValue(id)->load()));
     };
-    const int root = index("scaleroot") + 1, type = index("scaletype") + 1, mode = index("scalemode") + 1;
+    const bool following = followBtn_.getToggleState();
+    const int followed = proc_.followRoot.load();
+    const int root = ((following && followed >= 0) ? followed : index("scaleroot")) + 1;
+    const int type = index("scaletype") + 1, mode = index("scalemode") + 1;
+    rootBox_.setEnabled(!following);  // la fondamentale vient du MIDI tant que le suivi est actif
     if (rootBox_.getSelectedId() != root) rootBox_.setSelectedId(root, dontSendNotification);
     if (typeBox_.getSelectedId() != type) typeBox_.setSelectedId(type, dontSendNotification);
     if (modeBox_.getSelectedId() != mode) modeBox_.setSelectedId(mode, dontSendNotification);
+}
+
+void ControlBar::fillLengthBox(bool resetSelection) {
+    const maq::Lang l = lang();
+    const int previous = lengthBox_.getSelectedId();
+    const bool capture = sourceBox_.getSelectedId() == 2;
+    lengthBox_.clear(dontSendNotification);
+    if (!capture) {
+        lengthBox_.addItem(S(maq::tr(maq::Str::Len1Loop, l)), 1);
+        const int loops[3] = {2, 4, 8};
+        for (int i = 0; i < 3; ++i) lengthBox_.addItem(S(maq::fmt(maq::Str::LenNLoops, l, "", loops[i])), i + 2);
+        lengthBox_.addItem(S(maq::tr(maq::Str::LenCycle, l)), 5);
+        lengthBox_.setSelectedId((resetSelection || previous < 1 || previous > 5) ? 1 : previous, dontSendNotification);
+    } else {
+        lengthBox_.addItem(S(maq::tr(maq::Str::LenBar, l)), 1);
+        const int bars[5] = {2, 4, 8, 16, 32};
+        for (int i = 0; i < 5; ++i) lengthBox_.addItem(S(maq::fmt(maq::Str::LenBars, l, "", bars[i])), i + 2);
+        lengthBox_.setSelectedId((resetSelection || previous < 1 || previous > 6) ? 3 : previous, dontSendNotification);  // 4 mesures
+    }
+}
+
+void ControlBar::fillMidiBoxes() {
+    const maq::Lang l = lang();
+    const int source = jmax(0, sourceBox_.getSelectedId() - 1);
+    const int scope = jmax(0, scopeBox_.getSelectedId() - 1);
+    sourceBox_.clear(dontSendNotification);
+    sourceBox_.addItem(S(maq::tr(maq::Str::SrcLoop, l)), 1);
+    sourceBox_.addItem(S(maq::tr(maq::Str::SrcCapture, l)), 2);
+    sourceBox_.setSelectedId(source + 1, dontSendNotification);
+    scopeBox_.clear(dontSendNotification);
+    scopeBox_.addItem(S(maq::tr(maq::Str::ScopeAll, l)), 1);
+    for (int r = 1; r <= maq::kRows; ++r) scopeBox_.addItem(S(maq::fmt(maq::Str::ScopeRow, l, "", r)), r + 1);
+    scopeBox_.setSelectedId(scope + 1, dontSendNotification);
+    fillLengthBox(false);
+}
+
+String ControlBar::midiFileName() const {
+    return String("MAQ16_") + (sourceBox_.getSelectedId() == 2 ? "capture_" : "loop_") +
+           Time::getCurrentTime().formatted("%Y%m%d_%H%M%S") + ".mid";
+}
+
+void ControlBar::doExportMidi() {
+    const auto data = proc_.buildMidi(sourceBox_.getSelectedId() - 1, lengthBox_.getSelectedId() - 1,
+                                      scopeBox_.getSelectedId() - 1);
+    if (data.empty()) {
+        setStatus(S(maq::tr(maq::Str::MidiEmpty, lang())));
+        return;
+    }
+    const File dir(S(proc_.folders.folderForUtf8(maq::FolderPurpose::MidiExport)));
+    chooser_ = std::make_unique<FileChooser>(S(maq::tr(maq::Str::ExportMidiTitle, lang())),
+                                             dir.getChildFile(midiFileName()), "*.mid");
+    chooser_->launchAsync(FileBrowserComponent::saveMode | FileBrowserComponent::canSelectFiles |
+                              FileBrowserComponent::warnAboutOverwriting,
+                          [this, data](const FileChooser& fc) {
+                              File f = fc.getResult();
+                              if (f == File()) return;
+                              if (!f.hasFileExtension("mid")) f = f.withFileExtension("mid");
+                              if (f.replaceWithData(data.data(), data.size())) {
+                                  proc_.folders.setFolderUtf8(maq::FolderPurpose::MidiExport,
+                                                              f.getParentDirectory().getFullPathName().toRawUTF8());
+                                  proc_.saveFolderSettings();
+                                  setStatus(S(maq::fmt(maq::Str::MidiExported, lang(), f.getFileName().toStdString())));
+                              } else {
+                                  setStatus(S(maq::tr(maq::Str::MidiFailed, lang())));
+                              }
+                          });
 }
 
 void ControlBar::doExport() {
@@ -1054,10 +1189,10 @@ MaqEditor::MaqEditor(MaqProcessor& p) : AudioProcessorEditor(&p), facade_(p), ba
                            [this] { facade_.learnSkip(); });
 
     setResizable(true, true);
-    setResizeLimits(685, 325, 2738, 1300);
+    setResizeLimits(685, 344, 2738, 1372);
     if (auto* c = getConstrainer())
         c->setFixedAspectRatio(static_cast<double>(kWidth) / static_cast<double>(kTotalHeight));
-    setSize(1096, 520);
+    setSize(1096, 549);
 }
 
 void MaqEditor::resized() {

@@ -65,6 +65,7 @@ struct MidiMsg {
     int channel;  // 0..15
     int data1;    // note / contrôleur / programme / pression ; PitchBend : valeur 14 bits
     int data2;    // vélocité / valeur
+    int row;      // rangée d'origine (0..2), -1 si le message ne vient pas d'une rangée (Panic)
 };
 
 // Conversions potard -> valeur (hypothèses documentées dans la spécification).

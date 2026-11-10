@@ -5,7 +5,9 @@
 #include <array>
 #include <atomic>
 #include <vector>
+#include "engine/Capture.h"
 #include "engine/Events.h"
+#include "engine/MidiExport.h"
 #include "engine/Scale.h"
 #include "engine/Unit.h"
 #include "presets/Bank.h"
@@ -78,6 +80,15 @@ public:
     std::atomic<bool> learnActive{false};
     bool popNote(NoteIn& out);
 
+    // ---- Export MIDI : boucle (rendu sans transport) ou capture (derniers passages joués) ----
+    maq::Unit makeUnitSnapshot() const;
+    // source : 0 = boucle, 1 = capture ; lengthIndex : voir l'interface ; scope : 0 = 3 rangées, 1..3 = une rangée.
+    // Retourne un tableau vide s'il n'y a aucune note à exporter.
+    std::vector<std::uint8_t> buildMidi(int source, int lengthIndex, int scope) const;
+
+    // ---- Suivi de la tonalité par MIDI : fondamentale reçue sur le canal 16 (0..11), -1 si aucune ----
+    std::atomic<int> followRoot{-1};
+
     juce::AudioProcessorValueTreeState apvts;
 
     // Lus par l'interface (mis à jour dans processBlock)
@@ -89,6 +100,7 @@ public:
 private:
     static juce::AudioProcessorValueTreeState::ParameterLayout createLayout();
     void syncEngineFromParams();
+    void configureUnit(maq::Unit& u) const;
     void emit(const std::vector<maq::MidiMsg>& msgs, int samplePos, juce::MidiBuffer& out);
     void setParamValue(const juce::String& id, int value);
 
@@ -106,6 +118,9 @@ private:
     };
     std::array<RowParams, maq::kRows> rp_;
 
+    std::atomic<float>* followKey_ = nullptr;
+    maq::CaptureBuffer capture_;
+    std::int64_t captureClock_ = 0;  // compte les horloges jouées (fil audio uniquement)
     std::atomic<float>* scaleRoot_ = nullptr;
     std::atomic<float>* scaleType_ = nullptr;
     std::atomic<float>* scaleMode_ = nullptr;

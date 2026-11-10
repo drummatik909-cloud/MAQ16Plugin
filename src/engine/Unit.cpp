@@ -70,7 +70,7 @@ void Unit::continuePlaying() { playing_ = true; }
 void Unit::noteOffIfActive(int r, std::vector<MidiMsg>& out) {
     RowState& s = st_[r];
     if (s.noteActive) {
-        out.push_back({MidiMsg::Type::NoteOff, s.noteChannel, s.note, 0});
+        out.push_back({MidiMsg::Type::NoteOff, s.noteChannel, s.note, 0, r});
         s.noteActive = false;
     }
 }
@@ -86,7 +86,7 @@ void Unit::panic(std::vector<MidiMsg>& out) {
     for (const auto& row : rows)
         if (row.event.kind != EventKind::Off) used[clampi(row.channel, 1, 16) - 1] = true;
     for (int c = 0; c < 16; ++c)
-        if (used[c]) out.push_back({MidiMsg::Type::ControlChange, c, 123, 0});
+        if (used[c]) out.push_back({MidiMsg::Type::ControlChange, c, 123, 0, -1});
 }
 
 int Unit::currentStep(int row) const { return st_[clampi(row, 0, kRows - 1)].lastStep; }
@@ -150,7 +150,7 @@ void Unit::fireRow(int r, std::vector<MidiMsg>& out) {
         }
         if (vel == 0) return;  // vélocité 0 = pause
         noteOffIfActive(r, out);
-        out.push_back({MidiMsg::Type::NoteOn, ch, note, vel});
+        out.push_back({MidiMsg::Type::NoteOn, ch, note, vel, r});
         s.noteActive = true; s.note = note; s.noteChannel = ch;
         const int g = std::max(1, cfg.gate);
         s.noteLeft = (cfg.noteLen <= 1) ? g : std::min(cfg.noteLen, g);
@@ -158,17 +158,17 @@ void Unit::fireRow(int r, std::vector<MidiMsg>& out) {
     }
     switch (k) {
         case EventKind::FreeCC:
-            out.push_back({MidiMsg::Type::ControlChange, ch, clampi(cfg.event.ccNumber, 0, 127), pot}); break;
+            out.push_back({MidiMsg::Type::ControlChange, ch, clampi(cfg.event.ccNumber, 0, 127), pot, r}); break;
         case EventKind::FixedCC:
-            out.push_back({MidiMsg::Type::ControlChange, ch, fixedCcNumber(cfg.event.ccNumber), pot}); break;
+            out.push_back({MidiMsg::Type::ControlChange, ch, fixedCcNumber(cfg.event.ccNumber), pot, r}); break;
         case EventKind::PitchBend:
         case EventKind::PitchBendPos:
         case EventKind::PitchBendNeg:
-            out.push_back({MidiMsg::Type::PitchBend, ch, pitchBendFromPot(k, pot) << 7, 0}); break;
+            out.push_back({MidiMsg::Type::PitchBend, ch, pitchBendFromPot(k, pot) << 7, 0, r}); break;
         case EventKind::AfterTouch:
-            out.push_back({MidiMsg::Type::ChannelPressure, ch, pot, 0}); break;
+            out.push_back({MidiMsg::Type::ChannelPressure, ch, pot, 0, r}); break;
         case EventKind::ProgramChange:
-            out.push_back({MidiMsg::Type::ProgramChange, ch, pot, 0}); break;
+            out.push_back({MidiMsg::Type::ProgramChange, ch, pot, 0, r}); break;
         default: break;
     }
 }

@@ -56,6 +56,25 @@ const Pair kStrings[] = {
     {"Quantif. en sortie", "Output quantize"},                           // ScaleOutput
     {"Apprentissage : clique un potard, puis joue des notes", "Learn: click a knob, then play notes"},  // LearnOn
     {"Apprentissage terminé", "Learning finished"},                      // LearnOff
+    {"MIDI", "MIDI"},                                                    // MidiLabel
+    {"Boucle", "Loop"},                                                  // SrcLoop
+    {"Capture", "Capture"},                                              // SrcCapture
+    {"1 boucle", "1 loop"},                                              // Len1Loop
+    {"{n} boucles", "{n} loops"},                                        // LenNLoops
+    {"Cycle complet", "Full cycle"},                                     // LenCycle
+    {"1 mesure", "1 bar"},                                               // LenBar
+    {"{n} mesures", "{n} bars"},                                         // LenBars
+    {"3 rangées", "3 rows"},                                             // ScopeAll
+    {"Rangée {n}", "Row {n}"},                                           // ScopeRow
+    {"Exporter .mid", "Export .mid"},                                    // ExportMidi
+    {"Glisser le MIDI", "Drag the MIDI"},                                // DragMidi
+    {"MIDI exporté : {file}", "MIDI exported: {file}"},                  // MidiExported
+    {"Échec de l'export MIDI", "MIDI export failed"},                    // MidiFailed
+    {"Rien à exporter (aucune note : capture vide ou rangées désactivées)", "Nothing to export (no notes: empty capture or rows switched off)"},  // MidiEmpty
+    {"Exporter le MIDI", "Export the MIDI"},                             // ExportMidiTitle
+    {"Suivre Bitwig", "Follow Bitwig"},                                  // FollowKey
+    {"Suivi de la tonalité : le plugin écoute les notes MIDI du canal 16 (la note jouée devient la fondamentale)", "Key following: the plugin listens to MIDI notes on channel 16 (the note played becomes the root)"},  // FollowKeyOn
+    {"Suivi de la tonalité désactivé", "Key following off"},             // FollowKeyOff
 };
 static_assert(sizeof(kStrings) / sizeof(kStrings[0]) == static_cast<std::size_t>(Str::Count),
               "la table de textes doit suivre l'énumération Str");

@@ -14,6 +14,7 @@ MaqProcessor::MaqProcessor()
     for (auto& s : uiStep) s.store(0);
     folders.load(maq::FolderSettings::defaultSettingsFile());
     prefs.load(maq::Preferences::defaultFile());
+    followKey_ = apvts.getRawParameterValue("followkey");
     scaleRoot_ = apvts.getRawParameterValue("scaleroot");
     scaleType_ = apvts.getRawParameterValue("scaletype");
     scaleMode_ = apvts.getRawParameterValue("scalemode");
@@ -42,6 +43,7 @@ AudioProcessorValueTreeState::ParameterLayout MaqProcessor::createLayout() {
     layout.add(std::make_unique<AudioParameterBool>(ParameterID{"valnote", 1}, "Show note names", false));
     layout.add(std::make_unique<AudioParameterBool>(ParameterID{"notefr", 1}, "Note names in French", true));
     layout.add(std::make_unique<AudioParameterInt>(ParameterID{"preset", 1}, "Preset slot", 0, maq::kPresetSlots, 0));
+    layout.add(std::make_unique<AudioParameterBool>(ParameterID{"followkey", 1}, "Follow key via MIDI (ch.16)", false));
 
     {   // Gamme : fondamentale, type, mode (aucune / verrouillage / quantification en sortie)
         StringArray roots, scales, modes;
@@ -76,14 +78,18 @@ AudioProcessorValueTreeState::ParameterLayout MaqProcessor::createLayout() {
     return layout;
 }
 
-void MaqProcessor::syncEngineFromParams() {
-    unit_.scaleRoot = toInt(scaleRoot_);
-    unit_.scaleType = toInt(scaleType_);
-    unit_.scaleMode = toInt(scaleMode_);
+void MaqProcessor::syncEngineFromParams() { configureUnit(unit_); }
+
+// Copie les réglages actuels (paramètres) dans une unité : utilisée par le fil audio et pour l'export MIDI
+void MaqProcessor::configureUnit(maq::Unit& u) const {
+    const int followed = followRoot.load();
+    u.scaleRoot = (followKey_->load() > 0.5f && followed >= 0) ? followed : toInt(scaleRoot_);  // fondamentale reçue par MIDI
+    u.scaleType = toInt(scaleType_);
+    u.scaleMode = toInt(scaleMode_);
 
     for (int r = 0; r < maq::kRows; ++r) {
         const auto& p = rp_[static_cast<size_t>(r)];
-        auto& cfg = unit_.rows[static_cast<size_t>(r)];
+        auto& cfg = u.rows[static_cast<size_t>(r)];
 
         maq::EventConfig e = maq::eventForIndex(toInt(p.event));
         if (e.kind == maq::EventKind::FreeCC) e.ccNumber = toInt(p.cc);
@@ -132,10 +138,18 @@ void MaqProcessor::emit(const std::vector<maq::MidiMsg>& msgs, int samplePos, Mi
 }
 
 void MaqProcessor::processBlock(AudioBuffer<float>& buffer, MidiBuffer& midi) {
+    const bool followOn = followKey_->load() > 0.5f;
+    if (followOn) {  // suivi de la tonalité : une note sur le canal 16 donne la fondamentale
+        for (const auto metadata : midi) {
+            const MidiMessage m = metadata.getMessage();
+            if (m.isNoteOn() && m.getChannel() == 16) followRoot.store(m.getNoteNumber() % 12);
+        }
+    }
+
     if (learnActive.load()) {  // apprentissage : on met de côté les notes jouées au clavier
         for (const auto metadata : midi) {
             const MidiMessage m = metadata.getMessage();
-            if (m.isNoteOn()) {
+            if (m.isNoteOn() && !(followOn && m.getChannel() == 16)) {
                 int start1, size1, start2, size2;
                 noteFifo_.prepareToWrite(1, start1, size1, start2, size2);
                 if (size1 > 0) {
@@ -175,6 +189,7 @@ void MaqProcessor::processBlock(AudioBuffer<float>& buffer, MidiBuffer& midi) {
     if (!playing) {
         if (wasPlaying_) {
             unit_.stop(out);
+            for (const auto& m : out) capture_.push(capture_.lastClock(), m);
             emit(out, 0, midi);
         }
         wasPlaying_ = false;
@@ -201,6 +216,9 @@ void MaqProcessor::processBlock(AudioBuffer<float>& buffer, MidiBuffer& midi) {
         if (offset > numSamples - 1) offset = numSamples - 1;
         out.clear();
         unit_.tick(out);
+        for (const auto& m : out) capture_.push(captureClock_, m);  // mémoire de la capture
+        capture_.setLastClock(captureClock_);
+        ++captureClock_;
         emit(out, offset, midi);
         nextClock_ += 1.0;
     }
@@ -328,6 +346,38 @@ bool MaqProcessor::importBank(const File& file) {
 }
 
 void MaqProcessor::saveFolderSettings() { folders.save(maq::FolderSettings::defaultSettingsFile()); }
+
+maq::Unit MaqProcessor::makeUnitSnapshot() const {
+    maq::Unit u;
+    configureUnit(u);
+    return u;
+}
+
+std::vector<std::uint8_t> MaqProcessor::buildMidi(int source, int lengthIndex, int scope) const {
+    const double current = uiBpm.load();
+    const double bpm = current > 0.0 ? current : 120.0;
+    const int rowMask = (scope >= 1 && scope <= maq::kRows) ? (1 << (scope - 1)) : 0x7;
+
+    std::vector<maq::CapturedEvent> events;
+    std::int64_t length = 0;
+    if (source == 0) {  // boucle : rendu sans transport, reproductible
+        const maq::Unit u = makeUnitSnapshot();
+        static const int multiples[4] = {1, 2, 4, 8};
+        if (lengthIndex >= 0 && lengthIndex < 4) length = maq::loopLengthClocks(u.rows) * multiples[lengthIndex];
+        else length = maq::cycleLengthClocks(u.rows, 64 * maq::kClocksPerBar);  // cycle complet, plafonné à 64 mesures
+        events = maq::renderLoop(u, length);
+    } else {  // capture : les derniers passages joués
+        static const int bars[6] = {1, 2, 4, 8, 16, 32};
+        length = static_cast<std::int64_t>(bars[jlimit(0, 5, lengthIndex)]) * maq::kClocksPerBar;
+        events = capture_.window(length);
+    }
+
+    bool anyNote = false;
+    for (const auto& e : events)
+        if (e.msg.type == maq::MidiMsg::Type::NoteOn && e.msg.row >= 0 && (rowMask & (1 << e.msg.row))) { anyNote = true; break; }
+    if (!anyNote) return {};
+    return maq::buildMidiFile(events, bpm, rowMask, length);
+}
 
 bool MaqProcessor::popNote(NoteIn& out) {
     int start1, size1, start2, size2;

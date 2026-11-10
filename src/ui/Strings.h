@@ -16,6 +16,8 @@ enum class Str {
     ManualOnline, ManualLocal, ManualChoose, ManualChooseTitle, ManualSaved, ManualMissing,
     PanicDone,
     Learn, Pause, Skip, ScaleLabel, ScaleOff, ScaleLock, ScaleOutput, LearnOn, LearnOff,
+    MidiLabel, SrcLoop, SrcCapture, Len1Loop, LenNLoops, LenCycle, LenBar, LenBars, ScopeAll, ScopeRow,
+    ExportMidi, DragMidi, MidiExported, MidiFailed, MidiEmpty, ExportMidiTitle, FollowKey, FollowKeyOn, FollowKeyOff,
     Count
 };
 
