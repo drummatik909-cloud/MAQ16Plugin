@@ -2,6 +2,8 @@
 
 namespace maq {
 
+CaptureBuffer::CaptureBuffer() : buf_(kCapacity) {}
+
 void CaptureBuffer::push(std::int64_t clock, const MidiMsg& m) {
     const std::uint64_t n = count_.load(std::memory_order_relaxed);
     CapturedEvent& slot = buf_[static_cast<std::size_t>(n % kCapacity)];
