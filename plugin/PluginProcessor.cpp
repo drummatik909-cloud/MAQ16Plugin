@@ -6,10 +6,18 @@ using namespace juce;
 
 namespace {
 int toInt(const std::atomic<float>* a) { return static_cast<int>(std::lround(a->load())); }
+
+AudioProcessor::BusesProperties makeBuses() {
+#if MAQ_AS_INSTRUMENT
+    return AudioProcessor::BusesProperties().withOutput("Output", AudioChannelSet::stereo(), true);  // sortie audio silencieuse
+#else
+    return AudioProcessor::BusesProperties();
+#endif
+}
 }  // namespace
 
 MaqProcessor::MaqProcessor()
-    : AudioProcessor(BusesProperties()),
+    : AudioProcessor(makeBuses()),
       apvts(*this, nullptr, "MAQ16", createLayout()) {
     for (auto& s : uiStep) s.store(0);
     folders.load(maq::FolderSettings::defaultSettingsFile());
@@ -138,6 +146,7 @@ void MaqProcessor::emit(const std::vector<maq::MidiMsg>& msgs, int samplePos, Mi
 }
 
 void MaqProcessor::processBlock(AudioBuffer<float>& buffer, MidiBuffer& midi) {
+    buffer.clear();  // le plugin ne produit pas de son : sortie audio silencieuse
     const bool followOn = followKey_->load() > 0.5f;
     if (followOn) {  // suivi de la tonalité : une note sur le canal 16 donne la fondamentale
         for (const auto metadata : midi) {

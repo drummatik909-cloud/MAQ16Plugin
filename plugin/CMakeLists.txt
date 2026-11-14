@@ -13,6 +13,21 @@ FetchContent_MakeAvailable(JUCE clap-juce-extensions)
 # Image de la façade intégrée au plugin (BinaryData::facade_png)
 juce_add_binary_data(MAQ16Assets SOURCES ../assets/facade.png)
 
+# Compatibilité entre DAW : le plugin se déclare comme un INSTRUMENT (entrée MIDI, sortie MIDI, sortie audio
+# stéréo silencieuse). Ableton Live et Cubase n'ont pas d'emplacement « effet MIDI » pour les plugins tiers :
+# ils acceptent en revanche un instrument dont la sortie MIDI est branchée sur une autre piste.
+# Pour revenir à la déclaration « effet MIDI » : cmake -DMAQ_AS_INSTRUMENT=OFF
+option(MAQ_AS_INSTRUMENT "Déclarer le plugin comme instrument (compatible Ableton Live, Cubase)" ON)
+if(MAQ_AS_INSTRUMENT)
+    set(MAQ_IS_SYNTH TRUE)
+    set(MAQ_IS_MIDI_EFFECT FALSE)
+    set(MAQ_INSTRUMENT_DEF 1)
+else()
+    set(MAQ_IS_SYNTH FALSE)
+    set(MAQ_IS_MIDI_EFFECT TRUE)
+    set(MAQ_INSTRUMENT_DEF 0)
+endif()
+
 juce_add_plugin(MAQ16
     PLUGIN_MANUFACTURER_CODE Maqp
     PLUGIN_CODE Maq1
@@ -20,10 +35,10 @@ juce_add_plugin(MAQ16
     BUNDLE_ID com.maq16plugin.maq16
     PRODUCT_NAME "MAQ 16-3"
     FORMATS VST3
-    IS_SYNTH FALSE
+    IS_SYNTH ${MAQ_IS_SYNTH}
     NEEDS_MIDI_INPUT TRUE
     NEEDS_MIDI_OUTPUT TRUE
-    IS_MIDI_EFFECT TRUE
+    IS_MIDI_EFFECT ${MAQ_IS_MIDI_EFFECT}
     COPY_PLUGIN_AFTER_BUILD FALSE)
 
 clap_juce_extensions_plugin(TARGET MAQ16
@@ -37,7 +52,8 @@ target_sources(MAQ16 PRIVATE
 target_compile_definitions(MAQ16 PUBLIC
     JUCE_WEB_BROWSER=0
     JUCE_USE_CURL=0
-    JUCE_VST3_CAN_REPLACE_VST2=0)
+    JUCE_VST3_CAN_REPLACE_VST2=0
+    MAQ_AS_INSTRUMENT=${MAQ_INSTRUMENT_DEF})
 
 target_link_libraries(MAQ16 PRIVATE
     MAQ16Assets

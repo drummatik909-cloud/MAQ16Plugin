@@ -15,6 +15,12 @@
 #include "ui/Preferences.h"
 #include "ui/Strings.h"
 
+// 1 : le plugin se déclare comme instrument avec une sortie audio stéréo silencieuse (compatible Ableton Live, Cubase)
+// 0 : déclaration « effet MIDI » sans entrée ni sortie audio
+#ifndef MAQ_AS_INSTRUMENT
+#define MAQ_AS_INSTRUMENT 1
+#endif
+
 class MaqProcessor : public juce::AudioProcessor {
 public:
     MaqProcessor();
@@ -22,7 +28,15 @@ public:
 
     void prepareToPlay(double sampleRate, int samplesPerBlock) override;
     void releaseResources() override {}
+#if MAQ_AS_INSTRUMENT
+    bool isBusesLayoutSupported(const BusesLayout& layout) const override {
+        const auto& out = layout.getMainOutputChannelSet();
+        return layout.getMainInputChannelSet().isDisabled() &&
+               (out == juce::AudioChannelSet::stereo() || out.isDisabled());
+    }
+#else
     bool isBusesLayoutSupported(const BusesLayout&) const override { return true; }
+#endif
     void processBlock(juce::AudioBuffer<float>&, juce::MidiBuffer&) override;
 
     juce::AudioProcessorEditor* createEditor() override;
@@ -31,7 +45,7 @@ public:
     const juce::String getName() const override { return "MAQ 16-3"; }
     bool acceptsMidi() const override { return true; }
     bool producesMidi() const override { return true; }
-    bool isMidiEffect() const override { return true; }
+    bool isMidiEffect() const override { return MAQ_AS_INSTRUMENT == 0; }
     double getTailLengthSeconds() const override { return 0.0; }
 
     int getNumPrograms() override { return 1; }
