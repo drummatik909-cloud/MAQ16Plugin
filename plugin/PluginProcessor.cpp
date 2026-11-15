@@ -6,15 +6,16 @@ using namespace juce;
 
 namespace {
 int toInt(const std::atomic<float>* a) { return static_cast<int>(std::lround(a->load())); }
+}  // namespace
 
-AudioProcessor::BusesProperties makeBuses() {
+// Fonction membre : seule la classe a accès au type protégé AudioProcessor::BusesProperties
+auto MaqProcessor::makeBuses() -> BusesProperties {
 #if MAQ_AS_INSTRUMENT
-    return AudioProcessor::BusesProperties().withOutput("Output", AudioChannelSet::stereo(), true);  // sortie audio silencieuse
+    return BusesProperties().withOutput("Output", AudioChannelSet::stereo(), true);  // sortie audio silencieuse
 #else
-    return AudioProcessor::BusesProperties();
+    return BusesProperties();
 #endif
 }
-}  // namespace
 
 MaqProcessor::MaqProcessor()
     : AudioProcessor(makeBuses()),

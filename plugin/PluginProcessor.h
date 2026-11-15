@@ -115,6 +115,7 @@ private:
     static juce::AudioProcessorValueTreeState::ParameterLayout createLayout();
     void syncEngineFromParams();
     void configureUnit(maq::Unit& u) const;
+    static BusesProperties makeBuses();
     void emit(const std::vector<maq::MidiMsg>& msgs, int samplePos, juce::MidiBuffer& out);
     void setParamValue(const juce::String& id, int value);
 
