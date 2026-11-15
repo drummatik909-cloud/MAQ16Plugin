@@ -14,6 +14,8 @@ add_library(maq_engine STATIC
     src/engine/Scale.cpp
     src/engine/Capture.cpp
     src/engine/MidiExport.cpp
+    src/engine/Remote.cpp
+    src/engine/Project.cpp
     src/ui/Strings.cpp
     src/ui/Preferences.cpp
     src/presets/Bank.cpp

@@ -11,6 +11,17 @@ public:
 
     std::array<RowConfig, kRows> rows;
     int relativeBase = 36;  // note de référence pour NoteRel (hypothèse : note reçue absente = 36)
+    std::array<int, kRows> relativeBaseRow;   // référence propre à une rangée relative ; -1 = utiliser relativeBase
+    void setRelativeBase(int row, int note);  // row = -1 : toutes les rangées
+
+    // Chaînage (lot 5). Mode Onr : à la fin de sa passe, la rangée démarre la rangée Onr suivante.
+    bool chainInsideUnit = true;  // chaînage Onr entre les rangées de l'unité
+    bool wrapOnr = true;          // la dernière rangée Onr relance la première ; sinon la chaîne s'arrête
+    const std::vector<int>& finishedRows() const { return finished_; }  // rangées One-Shot terminées à la dernière horloge
+    bool anyRowRunning() const;
+    void holdRow(int r);                                  // met la rangée en attente
+    void triggerRow(int r, std::vector<MidiMsg>& out);    // démarre la rangée immédiatement
+    void triggerUnit(std::vector<MidiMsg>& out);          // redémarre l'unité (la rangée Onr de tête démarre)
 
     // Gamme (lot 3) : en mode « quantification en sortie » (2), chaque note jouée est ramenée dans la gamme
     int scaleMode = 0;
@@ -43,10 +54,15 @@ private:
     };
 
     std::array<RowState, kRows> st_;
+    std::vector<int> finished_;
     bool playing_ = false;
     uint32_t seed_ = 12345;
 
     void resetStates();
+    void applyOnrHead();
+    bool isOnr(int r) const;
+    int nextOnrRow(int r) const;
+    int baseFor(int r) const;
     void fireRow(int r, std::vector<MidiMsg>& out);
     int position(int r);  // 1..16 ou -1 si la rangée a fini
     void noteOffIfActive(int r, std::vector<MidiMsg>& out);

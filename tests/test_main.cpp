@@ -7,6 +7,8 @@
 #include "engine/Capture.h"
 #include "engine/Events.h"
 #include "engine/MidiExport.h"
+#include "engine/Project.h"
+#include "engine/Remote.h"
 #include "engine/Scale.h"
 #include "presets/Bank.h"
 #include "presets/FolderSettings.h"
@@ -643,6 +645,335 @@ static void testRenderAndMidiFile() {
     CHECK(offsSeen == 1 && noteOnSeen == 1 && bendOk == 1 && ccOk == 1 && ccCount == 1);
 }
 
+
+// ============================================================ Lot 5 : unités, chaînage, liens
+
+struct PEv { int tick; MidiMsg m; };
+
+static std::vector<PEv> runProject(Project& p, int ticks, bool doStart = true) {
+    std::vector<PEv> all;
+    if (doStart) p.start();
+    for (int t = 0; t < ticks; ++t) {
+        std::vector<MidiMsg> out;
+        p.tick(out);
+        for (auto& m : out) all.push_back({t, m});
+    }
+    return all;
+}
+
+static std::vector<PEv> projNoteOns(const std::vector<PEv>& evs) {
+    std::vector<PEv> n;
+    for (auto& e : evs) if (e.m.type == MidiMsg::Type::NoteOn) n.push_back(e);
+    return n;
+}
+
+static void onlyRow0(Unit& u, int channel, PlayMode mode, int first, int last) {
+    u.rows[0].event.kind = EventKind::NoteAbs;
+    u.rows[0].channel = channel;
+    u.rows[0].mode = mode;
+    u.rows[0].first = first;
+    u.rows[0].last = last;
+    u.rows[0].gate = 6;
+    u.rows[1].event.kind = EventKind::Off;
+    u.rows[2].event.kind = EventKind::Off;
+}
+
+static void testOnrChain() {
+    // 3 rangées en Onr = une séquence de 12 pas : 4 pas de chaque rangée, puis retour à la première
+    Unit u;
+    for (int r = 0; r < 3; ++r) {
+        u.rows[static_cast<size_t>(r)].event.kind = EventKind::NoteAbs;
+        u.rows[static_cast<size_t>(r)].mode = PlayMode::OneShotRetrigger;
+        u.rows[static_cast<size_t>(r)].first = 1;
+        u.rows[static_cast<size_t>(r)].last = 4;
+        u.rows[static_cast<size_t>(r)].gate = 6;
+        u.rows[static_cast<size_t>(r)].channel = r + 1;
+    }
+    auto evs = run(u, 84);
+    std::vector<int> rowsSeq, ticks;
+    for (auto& e : evs) if (e.m.type == MidiMsg::Type::NoteOn) { rowsSeq.push_back(e.m.row); ticks.push_back(e.tick); }
+    const std::vector<int> expected = {0,0,0,0, 1,1,1,1, 2,2,2,2, 0,0};
+    CHECK(rowsSeq == expected);
+    bool regular = ticks.size() == expected.size();
+    for (size_t i = 0; regular && i < ticks.size(); ++i) regular = (ticks[i] == static_cast<int>(6 * i));
+    CHECK(regular);  // aucun trou, aucune horloge de retard au passage d'une rangée à l'autre
+
+    // la dernière rangée Onr ne relance pas la première si wrapOnr est faux
+    Unit v = u;
+    v.wrapOnr = false;
+    int count = 0;
+    for (auto& e : run(v, 200)) if (e.m.type == MidiMsg::Type::NoteOn) ++count;
+    CHECK(count == 12);
+
+    // une rangée Onr seule se redéclenche elle-même
+    Unit w;
+    onlyRow0(w, 1, PlayMode::OneShotRetrigger, 1, 4);
+    const int pots[4] = {0, 32, 64, 127};
+    for (int i = 0; i < 4; ++i) w.rows[0].pot[static_cast<size_t>(i)] = pots[i];
+    auto notes = noteOns(run(w, 72));
+    const std::vector<int> expectedNotes = {36,39,42,48, 36,39,42,48, 36,39,42,48};
+    CHECK(notes == expectedNotes);
+
+    // la rangée coupée (rowMute) ne joue plus
+    Unit m;
+    onlyRow0(m, 1, PlayMode::Forward, 1, 16);
+    m.rows[0].rowMute = true;
+    CHECK(noteOns(run(m, 60)).empty());
+}
+
+static void testRemoteProgramChange() {
+    Unit u;
+    int sel = 0;
+    CHECK(applyProgramChange(u, sel, 1) && sel == 1);
+    CHECK(applyProgramChange(u, sel, 63) && u.rows[1].first == 16);
+    CHECK(applyProgramChange(u, sel, 64) && u.rows[1].last == 1);
+    CHECK(applyProgramChange(u, sel, 10) && u.rows[1].mode == PlayMode::Pendulum1);
+    CHECK(applyProgramChange(u, sel, 8) && u.rows[1].mode == PlayMode::Forward);
+    CHECK(applyProgramChange(u, sel, 9) && u.rows[1].mode == PlayMode::Backward);
+    CHECK(applyProgramChange(u, sel, 11) && u.rows[1].mode == PlayMode::Random);
+    CHECK(applyProgramChange(u, sel, 4) && u.rows[1].rowMute);
+    CHECK(applyProgramChange(u, sel, 3) && !u.rows[1].rowMute);
+    CHECK(applyProgramChange(u, sel, 6) && u.rows[1].mute[0] && u.rows[1].mute[15]);
+    CHECK(applyProgramChange(u, sel, 5) && !u.rows[1].mute[0] && !u.rows[1].mute[15]);
+    CHECK(applyProgramChange(u, sel, 32 + 3) && u.rows[1].mute[3]);
+    CHECK(applyProgramChange(u, sel, 16 + 3) && !u.rows[1].mute[3]);
+    CHECK(applyProgramChange(u, sel, 85) && u.rows[1].event.kind == EventKind::FixedCC && u.rows[1].event.ccNumber == 5);
+    CHECK(applyProgramChange(u, sel, 115) && u.rows[1].event.kind == EventKind::NoteAbs && u.rows[1].event.octaves == 4);
+    CHECK(applyProgramChange(u, sel, 120) && u.rows[1].event.kind == EventKind::NoteRel && u.rows[1].event.octaves == 4);
+    CHECK(applyProgramChange(u, sel, 122) && u.rows[1].event.kind == EventKind::PitchBend);
+    CHECK(applyProgramChange(u, sel, 123) && u.rows[1].event.kind == EventKind::PitchBendPos);
+    CHECK(applyProgramChange(u, sel, 124) && u.rows[1].event.kind == EventKind::PitchBendNeg);
+    CHECK(applyProgramChange(u, sel, 125) && u.rows[1].event.kind == EventKind::ProgramChange);
+    CHECK(!applyProgramChange(u, sel, 126) && !applyProgramChange(u, sel, 127));  // Cn1 et Ad1 : pas encore émulés
+    CHECK(!applyProgramChange(u, sel, 7) && !applyProgramChange(u, sel, 200));
+    CHECK(applyProgramChange(u, sel, 0) && sel == 0);
+    CHECK(u.rows[0].first == 1 && u.rows[0].last == 16);  // la rangée 1 n'a pas été touchée
+    CHECK(applyProgramChange(u, sel, 48) && u.rows[0].first == 1);
+}
+
+static void testProjectParallelAndOutput() {
+    Project p;
+    p.active = {true, true, false, false};
+    onlyRow0(p.units[0], 1, PlayMode::Forward, 1, 16);
+    onlyRow0(p.units[1], 3, PlayMode::Forward, 1, 16);
+    onlyRow0(p.units[2], 5, PlayMode::Forward, 1, 16);  // inactive : ne doit rien jouer
+
+    auto on = projNoteOns(runProject(p, 12));
+    CHECK(on.size() == 4);
+    CHECK(on[0].m.unit == 0 && on[1].m.unit == 1 && on[2].m.unit == 0 && on[3].m.unit == 1);
+    CHECK(on[0].tick == 0 && on[1].tick == 0 && on[2].tick == 6 && on[3].tick == 6);
+    CHECK(on[0].m.channel == 0 && on[1].m.channel == 2);
+
+    CHECK(p.collisions().empty());                       // canaux 1 et 3
+    p.units[1].rows[0].channel = 1;
+    auto col = p.collisions();
+    CHECK(col.size() == 1 && col[0].channel == 1 && col[0].unitMask == 3);
+    p.units[2].rows[0].channel = 1;
+    CHECK(p.collisions().size() == 1 && p.collisions()[0].unitMask == 3);   // une unité inactive ne compte pas
+    p.units[0].rows[1].event.kind = EventKind::NoteAbs;
+    p.units[0].rows[1].channel = 1;                      // deux rangées d'une même unité sur un canal : pas une collision
+    p.units[1].rows[0].channel = 7;
+    CHECK(p.collisions().empty());
+
+    // modes de canal de sortie
+    auto chOf = [&](int unit) {  // canal de sortie de la première note de l'unité
+        for (auto& e : projNoteOns(runProject(p, 1))) if (e.m.unit == unit) return e.m.channel;
+        return -1;
+    };
+    p.units[1].rows[0].channel = 3;
+    p.output[1].mode = ChannelMode::Forced;  p.output[1].forced = 10;
+    CHECK(chOf(1) == 9);
+    p.output[1].mode = ChannelMode::Offset;  p.output[1].offset = 15;     // canal 3 + 15 = canal 2 (circulaire)
+    CHECK(chOf(1) == 1);
+    p.output[1].offset = -3;                                              // canal 3 - 3 = canal 16
+    CHECK(chOf(1) == 15);
+    CHECK(Project::outputChannel(UnitOutput{ChannelMode::PerRow, 1, 0}, 4) == 4);
+
+    // arrêt : les Note Off sont étiquetés par unité et suivent le mode de canal
+    p.output[1].mode = ChannelMode::Forced;  p.output[1].forced = 10;
+    runProject(p, 2);
+    std::vector<MidiMsg> out;
+    p.stop(out);
+    int offs = 0; bool ok = true;
+    for (auto& m : out) if (m.type == MidiMsg::Type::NoteOff) {
+        ++offs;
+        if (m.unit == 1 && m.channel != 9) ok = false;
+        if (m.unit == 0 && m.channel != 0) ok = false;
+    }
+    CHECK(offs >= 2 && ok);
+    CHECK(!p.isPlaying());
+}
+
+static void testSeriesChain() {
+    // --- par rangée : A1 -> B1 -> A1 ...
+    Project p;
+    p.active = {true, true, false, false};
+    onlyRow0(p.units[0], 1, PlayMode::OneShotSingle, 1, 4);
+    onlyRow0(p.units[1], 2, PlayMode::OneShotSingle, 1, 4);
+    p.chain.kind = ChainKind::Series;
+    p.chain.scope = ChainScope::PerRow;
+    p.chain.loopToFirst = true;
+    auto on = projNoteOns(runProject(p, 72));
+    std::vector<int> units;
+    bool regular = on.size() == 12;
+    for (size_t i = 0; i < on.size(); ++i) {
+        units.push_back(on[i].m.unit);
+        if (on[i].tick != static_cast<int>(6 * i)) regular = false;
+    }
+    const std::vector<int> expectedUnits = {0,0,0,0, 1,1,1,1, 0,0,0,0};
+    CHECK(units == expectedUnits && regular);
+
+    // fin de chaîne : arrêt après la dernière unité
+    p.chain.loopToFirst = false;
+    CHECK(projNoteOns(runProject(p, 300)).size() == 8);
+
+    // --- par unité entière : A (rangées 1 puis 2 en Onr) -> B (idem) -> A ...
+    Project q;
+    q.active = {true, true, false, false};
+    for (int u = 0; u < 2; ++u) {
+        for (int r = 0; r < 3; ++r) {
+            RowConfig& row = q.units[static_cast<size_t>(u)].rows[static_cast<size_t>(r)];
+            row.event.kind = r < 2 ? EventKind::NoteAbs : EventKind::Off;
+            row.mode = PlayMode::OneShotRetrigger;
+            row.first = 1; row.last = 4; row.gate = 6;
+            row.channel = r + 1;
+        }
+    }
+    q.chain.kind = ChainKind::Series;
+    q.chain.scope = ChainScope::WholeUnit;
+    q.chain.loopToFirst = true;
+    on = projNoteOns(runProject(q, 120));
+    // attendu : A1 x4, A2 x4, B1 x4, B2 x4, A1 x4
+    std::vector<int> unitSeq, rowSeq;
+    bool regular2 = on.size() == 20;
+    for (size_t i = 0; i < on.size(); ++i) {
+        unitSeq.push_back(on[i].m.unit);
+        rowSeq.push_back(on[i].m.row);
+        if (on[i].tick != static_cast<int>(6 * i)) regular2 = false;
+    }
+    const std::vector<int> expectedUnitSeq = {0,0,0,0, 0,0,0,0, 1,1,1,1, 1,1,1,1, 0,0,0,0};
+    const std::vector<int> expectedRowSeq  = {0,0,0,0, 1,1,1,1, 0,0,0,0, 1,1,1,1, 0,0,0,0};
+    CHECK(unitSeq == expectedUnitSeq && rowSeq == expectedRowSeq && regular2);
+
+    q.chain.loopToFirst = false;
+    CHECK(projNoteOns(runProject(q, 400)).size() == 16);   // 2 unités x 2 rangées x 4 pas, puis arrêt
+
+    // sans chaînage, les deux unités jouent en parallèle
+    q.chain.kind = ChainKind::None;
+    for (int u = 0; u < 2; ++u)
+        for (int r = 0; r < 2; ++r) q.units[static_cast<size_t>(u)].rows[static_cast<size_t>(r)].mode = PlayMode::Forward;
+    CHECK(projNoteOns(runProject(q, 6)).size() == 4);
+}
+
+static void testLinks() {
+    // --- transposition : la note de A (rangée 1) règle la référence de la rangée relative de B
+    Project p;
+    p.active = {true, true, false, false};
+    onlyRow0(p.units[0], 1, PlayMode::Forward, 1, 16);
+    onlyRow0(p.units[1], 2, PlayMode::Forward, 1, 16);
+    p.units[0].rows[0].pot[0] = 64;   // note 42
+    p.units[0].rows[0].pot[1] = 127;  // note 48
+    p.units[1].rows[0].event.kind = EventKind::NoteRel;
+    p.units[1].rows[0].event.octaves = 1;
+    p.units[1].rows[0].pot[0] = 0;    // décalage 0
+    p.units[1].rows[0].pot[1] = 0;
+    auto on = projNoteOns(runProject(p, 7));
+    CHECK(on.size() == 4 && on[1].m.unit == 1 && on[1].m.data1 == 36);   // sans lien : référence par défaut
+    p.transposeLinks[0] = TransposeLink{true, 0, 0, 1, 0};
+    on = projNoteOns(runProject(p, 7));
+    CHECK(on.size() == 4);
+    CHECK(on[0].m.unit == 0 && on[0].m.data1 == 42);
+    CHECK(on[1].m.unit == 1 && on[1].m.data1 == 42 && on[1].tick == 0);  // même horloge que la note source
+    CHECK(on[3].m.unit == 1 && on[3].m.data1 == 48 && on[3].tick == 6);
+
+    // source dans l'unité B, cible dans l'unité A : l'ordre de lecture s'adapte
+    Project q;
+    q.active = {true, true, false, false};
+    onlyRow0(q.units[0], 1, PlayMode::Forward, 1, 16);
+    onlyRow0(q.units[1], 2, PlayMode::Forward, 1, 16);
+    q.units[1].rows[0].pot[0] = 127;  // note 48
+    q.units[0].rows[0].event.kind = EventKind::NoteRel;
+    q.units[0].rows[0].pot[0] = 0;
+    q.transposeLinks[0] = TransposeLink{true, 1, 0, 0, -1};
+    on = projNoteOns(runProject(q, 1));
+    bool found = false;
+    for (auto& e : on) if (e.m.unit == 0 && e.m.data1 == 48 && e.tick == 0) found = true;
+    CHECK(found);
+
+    // --- pilotage : une rangée Prg de A envoie des commandes de télécommande à B
+    Project c;
+    c.active = {true, true, false, false};
+    onlyRow0(c.units[0], 1, PlayMode::Forward, 1, 16);
+    c.units[0].rows[0].event.kind = EventKind::ProgramChange;
+    c.units[0].rows[0].pot[0] = 1;    // sélection de la rangée 2 de B
+    c.units[0].rows[0].pot[1] = 63;   // premier pas = 16
+    onlyRow0(c.units[1], 2, PlayMode::Forward, 1, 16);
+    CHECK(c.setControlLink(0, ControlLink{true, 0, 0, 1}));
+    auto evs = runProject(c, 7);
+    CHECK(c.units[1].rows[1].first == 16 && c.units[1].rows[0].first == 1);
+    CHECK(c.selectedRow(1) == 1);
+    int pcs = 0;
+    for (auto& e : evs) if (e.m.type == MidiMsg::Type::ProgramChange && e.m.unit == 0) ++pcs;
+    CHECK(pcs == 2);   // les Program Change sortent aussi vers le synthé
+
+    // protection contre les boucles de pilotage
+    CHECK(!c.setControlLink(1, ControlLink{true, 1, 0, 0}));   // B -> A refermerait la boucle
+    CHECK(!c.setControlLink(1, ControlLink{true, 2, 0, 2}));   // une unité ne se pilote pas elle-même
+    CHECK(c.setControlLink(1, ControlLink{true, 1, 0, 2}));    // B -> C est permis
+    CHECK(!c.setControlLink(2, ControlLink{true, 2, 0, 0}));   // C -> A : boucle A -> B -> C -> A
+    CHECK(c.setControlLink(2, ControlLink{true, 2, 0, 3}));    // C -> D est permis
+    CHECK(c.setControlLink(0, ControlLink{false, 0, 0, 1}));   // désactiver un lien est toujours permis
+    CHECK(c.setControlLink(2, ControlLink{true, 2, 0, 0}));    // sans A -> B, C -> A ne boucle plus
+}
+
+
+static void testProjectExport() {
+    // durées : sans chaînage, plus longue rangée des unités actives
+    Project p;
+    p.active = {true, true, false, false};
+    onlyRow0(p.units[0], 1, PlayMode::Forward, 1, 16);   // 96
+    onlyRow0(p.units[1], 2, PlayMode::Forward, 1, 3);    // 18
+    onlyRow0(p.units[2], 3, PlayMode::Forward, 1, 5);    // inactive : ignorée
+    CHECK(projectLoopClocks(p) == 96);
+    CHECK(projectCycleClocks(p, 100000) == 288);          // PPCM de 96 et 18
+    CHECK(projectCycleClocks(p, 200) == 200);
+    // série par rangée : 96 + 18 sur la rangée 1
+    p.chain.kind = ChainKind::Series; p.chain.scope = ChainScope::PerRow;
+    CHECK(projectLoopClocks(p) == 96 + 18);
+    // série par unité : somme des rangées One-Shot de chaque unité
+    p.chain.scope = ChainScope::WholeUnit;
+    p.units[0].rows[0].mode = PlayMode::OneShotRetrigger;
+    p.units[1].rows[0].mode = PlayMode::OneShotRetrigger;
+    CHECK(projectLoopClocks(p) == 96 + 18);
+    CHECK(projectCycleClocks(p, 10) == 10);
+
+    // rendu et fichier : une piste par unité et par rangée, nommées A1, B1...
+    Project q;
+    q.active = {true, true, false, false};
+    onlyRow0(q.units[0], 1, PlayMode::Forward, 1, 4);
+    onlyRow0(q.units[1], 5, PlayMode::Forward, 1, 4);
+    q.output[1].mode = ChannelMode::Forced; q.output[1].forced = 9;     // les canaux de sortie sont exportés
+    auto ev = renderProject(q, 24);
+    int onA = 0, onB = 0, offs = 0;
+    for (auto& e : ev) {
+        if (e.msg.type == MidiMsg::Type::NoteOn) { if (e.msg.unit == 0) ++onA; else ++onB; }
+        if (e.msg.type == MidiMsg::Type::NoteOff) ++offs;
+    }
+    CHECK(onA == 4 && onB == 4 && offs == 8);
+    Smf f = parseSmf(buildMidiFile(ev, 120.0, 0x7, 0x3, 24));
+    CHECK(f.ok && f.ntrks == 1 + 2 * 3);
+    CHECK(f.tracks[1].name == "A1" && f.tracks[4].name == "B1");
+    bool chOk = true; int bn = 0;
+    for (auto& e : f.tracks[4].events) if ((e.status & 0xF0) == 0x90) { ++bn; if ((e.status & 0x0F) != 8) chOk = false; }
+    CHECK(bn == 4 && chOk);                               // canal forcé 9 = valeur 8 dans le fichier
+    // une seule unité exportée (B) : une piste par rangée du masque
+    Smf g = parseSmf(buildMidiFile(ev, 120.0, 0x1, 0x2, 24));
+    CHECK(g.ok && g.ntrks == 2 && g.tracks[1].name == "B1");
+    // compatibilité : l'ancien appel garde les noms « Row N » pour l'unité A
+    Smf h = parseSmf(buildMidiFile(ev, 120.0, 0x1, 24));
+    CHECK(h.ok && h.ntrks == 2 && h.tracks[1].name == "Row 1");
+}
+
 static fs::path tempDir(const char* name) {
     fs::path d = fs::temp_directory_path() / name;
     std::error_code ec;
@@ -771,6 +1102,12 @@ int main() {
     testCapture();
     testRowIdsAndLengths();
     testRenderAndMidiFile();
+    testOnrChain();
+    testRemoteProgramChange();
+    testProjectParallelAndOutput();
+    testSeriesChain();
+    testLinks();
+    testProjectExport();
     std::printf("%d verifications, %d echec(s)\n", g_checks, g_fail);
     return g_fail == 0 ? 0 : 1;
 }

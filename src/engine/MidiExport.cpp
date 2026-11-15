@@ -83,6 +83,64 @@ std::int64_t cycleLengthClocks(const std::array<RowConfig, kRows>& rows, std::in
     return l > 0 ? l : kClocksPerBar;
 }
 
+std::int64_t projectLoopClocks(const Project& project) {
+    std::int64_t best = 0;
+    if (project.chain.kind == ChainKind::None) {
+        for (int u = 0; u < kUnits; ++u) {
+            if (!project.active[static_cast<size_t>(u)]) continue;
+            for (const auto& r : project.units[static_cast<size_t>(u)].rows) best = std::max(best, rowPeriodClocks(r));
+        }
+        return best > 0 ? best : kClocksPerBar;
+    }
+    if (project.chain.scope == ChainScope::PerRow) {
+        for (int r = 0; r < kRows; ++r) {
+            std::int64_t sum = 0;
+            for (int u = 0; u < kUnits; ++u)
+                if (project.active[static_cast<size_t>(u)] && project.chain.member[static_cast<size_t>(u)])
+                    sum += rowPeriodClocks(project.units[static_cast<size_t>(u)].rows[static_cast<size_t>(r)]);
+            best = std::max(best, sum);
+        }
+        return best > 0 ? best : kClocksPerBar;
+    }
+    std::int64_t sum = 0;  // série par unité : les rangées Onr de chaque unité s'enchaînent
+    for (int u = 0; u < kUnits; ++u) {
+        if (!project.active[static_cast<size_t>(u)] || !project.chain.member[static_cast<size_t>(u)]) continue;
+        for (const auto& r : project.units[static_cast<size_t>(u)].rows)
+            if (r.mode == PlayMode::OneShotRetrigger || r.mode == PlayMode::OneShotSingle) sum += rowPeriodClocks(r);
+    }
+    return sum > 0 ? sum : kClocksPerBar;
+}
+
+std::int64_t projectCycleClocks(const Project& project, std::int64_t capClocks) {
+    if (project.chain.kind != ChainKind::None) return std::min(projectLoopClocks(project), capClocks);
+    std::int64_t l = 0;
+    for (int u = 0; u < kUnits; ++u) {
+        if (!project.active[static_cast<size_t>(u)]) continue;
+        for (const auto& r : project.units[static_cast<size_t>(u)].rows) {
+            const std::int64_t p = rowPeriodClocks(r);
+            if (p == 0) continue;
+            l = lcm64(l, p);
+            if (l > capClocks) return capClocks;
+        }
+    }
+    return l > 0 ? l : kClocksPerBar;
+}
+
+std::vector<CapturedEvent> renderProject(Project project, std::int64_t clocks) {
+    std::vector<CapturedEvent> events;
+    std::vector<MidiMsg> out;
+    project.start();
+    for (std::int64_t c = 0; c < clocks; ++c) {
+        out.clear();
+        project.tick(out);
+        for (const auto& m : out) events.push_back({c, m});
+    }
+    out.clear();
+    project.stop(out);
+    for (const auto& m : out) events.push_back({clocks, m});
+    return events;
+}
+
 std::vector<CapturedEvent> renderLoop(Unit unit, std::int64_t clocks) {
     std::vector<CapturedEvent> events;
     std::vector<MidiMsg> out;
@@ -100,12 +158,18 @@ std::vector<CapturedEvent> renderLoop(Unit unit, std::int64_t clocks) {
 
 std::vector<std::uint8_t> buildMidiFile(const std::vector<CapturedEvent>& events, double bpm, int rowMask,
                                         std::int64_t lengthClocks) {
+    return buildMidiFile(events, bpm, rowMask, 1, lengthClocks);  // unité A seule
+}
+
+std::vector<std::uint8_t> buildMidiFile(const std::vector<CapturedEvent>& events, double bpm, int rowMask, int unitMask,
+                                        std::int64_t lengthClocks) {
     const std::int64_t endTick = std::max<std::int64_t>(0, lengthClocks) * kTicksPerClock;
 
     std::vector<std::uint8_t> file;
     int rowsUsed = 0;
-    for (int r = 0; r < kRows; ++r)
-        if (rowMask & (1 << r)) ++rowsUsed;
+    for (int u = 0; u < kUnits; ++u)
+        for (int r = 0; r < kRows; ++r)
+            if ((unitMask & (1 << u)) && (rowMask & (1 << r))) ++rowsUsed;
 
     // En-tête
     file.push_back('M'); file.push_back('T'); file.push_back('h'); file.push_back('d');
@@ -132,13 +196,15 @@ std::vector<std::uint8_t> buildMidiFile(const std::vector<CapturedEvent>& events
         appendChunk(file, t);
     }
 
-    for (int r = 0; r < kRows; ++r) {
-        if (!(rowMask & (1 << r))) continue;
+    for (int track = 0; track < kUnits * kRows; ++track) {
+        const int u = track / kRows;
+        const int r = track % kRows;
+        if (!(unitMask & (1 << u)) || !(rowMask & (1 << r))) continue;
 
         std::vector<Timed> msgs;
         int active[16][128] = {};  // notes ouvertes par canal
         for (const auto& e : events) {
-            if (e.msg.row != r) continue;
+            if (e.msg.row != r || e.msg.unit != u) continue;
             const std::int64_t tick = std::min(endTick, std::max<std::int64_t>(0, e.clock) * kTicksPerClock);
             const int ch = clampi(e.msg.channel, 0, 15);
             Timed t;
@@ -186,7 +252,9 @@ std::vector<std::uint8_t> buildMidiFile(const std::vector<CapturedEvent>& events
         std::stable_sort(msgs.begin(), msgs.end(), [](const Timed& a, const Timed& b) { return a.tick < b.tick; });
 
         std::vector<std::uint8_t> t;
-        const std::string name = "Row " + std::to_string(r + 1);
+        const bool onlyA = (unitMask == 1);
+        const std::string name = onlyA ? "Row " + std::to_string(r + 1)
+                                       : std::string(1, static_cast<char>('A' + u)) + std::to_string(r + 1);
         putVlq(t, 0);
         t.push_back(0xFF); t.push_back(0x03); t.push_back(static_cast<std::uint8_t>(name.size()));
         t.insert(t.end(), name.begin(), name.end());

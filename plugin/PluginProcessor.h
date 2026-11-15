@@ -8,6 +8,7 @@
 #include "engine/Capture.h"
 #include "engine/Events.h"
 #include "engine/MidiExport.h"
+#include "engine/Project.h"
 #include "engine/Scale.h"
 #include "engine/Unit.h"
 #include "presets/Bank.h"
@@ -57,11 +58,23 @@ public:
     void getStateInformation(juce::MemoryBlock&) override;
     void setStateInformation(const void*, int) override;
 
-    // Identifiants des paramètres (rangée 0..2, pas 0..15)
-    static juce::String potId(int row, int step) { return "pot_" + juce::String(row) + "_" + juce::String(step); }
-    static juce::String muteId(int row, int step) { return "mute_" + juce::String(row) + "_" + juce::String(step); }
-    static juce::String rowId(const juce::String& name, int row) { return name + "_" + juce::String(row); }
-    // Paramètres globaux : "valnote" (noms de notes), "notefr" (Do Ré Mi), "preset" (slot choisi, 0..99)
+    // Identifiants des paramètres (rangée 0..2, pas 0..15, unité 0..3). L'unité A garde les identifiants
+    // d'origine (projets existants) ; les unités B à D ajoutent le préfixe « u1_ », « u2_ », « u3_ ».
+    static juce::String unitPrefix(int unit) { return unit == 0 ? juce::String() : "u" + juce::String(unit) + "_"; }
+    static juce::String potId(int row, int step, int unit = 0) {
+        return unitPrefix(unit) + "pot_" + juce::String(row) + "_" + juce::String(step);
+    }
+    static juce::String muteId(int row, int step, int unit = 0) {
+        return unitPrefix(unit) + "mute_" + juce::String(row) + "_" + juce::String(step);
+    }
+    static juce::String rowId(const juce::String& name, int row, int unit = 0) {
+        return unitPrefix(unit) + name + "_" + juce::String(row);
+    }
+    // Réglages propres à une unité : "active", "outmode" (0 par rangée, 1 forcé, 2 décalage), "outchan", "outoff"
+    static juce::String unitId(const juce::String& name, int unit) { return name + "_unit" + juce::String(unit); }
+    // Paramètres globaux : "valnote" (noms de notes), "notefr" (Do Ré Mi), "preset" (slot choisi, 0..99),
+    // "chainkind" (0 aucun, 1 série par rangée, 2 série par unité), "chainloop",
+    // liens : "tr_on", "tr_su", "tr_sr", "tr_du", "tr_dr" (transposition) et "ct_on", "ct_su", "ct_sr", "ct_du" (pilotage)
 
     // ---- Presets (slots 1..99) ----
     void storePreset(int slot);        // enregistre les réglages actuels dans le slot
@@ -94,9 +107,15 @@ public:
     std::atomic<bool> learnActive{false};
     bool popNote(NoteIn& out);
 
+    // ---- Unités A à D ----
+    std::atomic<int> selectedUnit{0};  // unité affichée par la façade (les presets et l'apprentissage s'y appliquent)
+    int uiStepFor(int unit, int row) const { return uiStepAll[static_cast<size_t>(unit)][static_cast<size_t>(row)].load(); }
+    maq::Project makeProjectSnapshot() const;                 // réglages actuels sous forme de projet
+    std::vector<maq::ChannelCollision> channelCollisions() const;
+
     // ---- Export MIDI : boucle (rendu sans transport) ou capture (derniers passages joués) ----
-    maq::Unit makeUnitSnapshot() const;
-    // source : 0 = boucle, 1 = capture ; lengthIndex : voir l'interface ; scope : 0 = 3 rangées, 1..3 = une rangée.
+    // source : 0 = boucle, 1 = capture ; lengthIndex : voir l'interface ;
+    // scope : 0 = 3 rangées, 1..3 = une rangée (de l'unité choisie), 4 = toutes les unités.
     // Retourne un tableau vide s'il n'y a aucune note à exporter.
     std::vector<std::uint8_t> buildMidi(int source, int lengthIndex, int scope) const;
 
@@ -106,7 +125,7 @@ public:
     juce::AudioProcessorValueTreeState apvts;
 
     // Lus par l'interface (mis à jour dans processBlock)
-    std::array<std::atomic<int>, maq::kRows> uiStep;
+    std::array<std::array<std::atomic<int>, maq::kRows>, maq::kUnits> uiStepAll;
     std::atomic<double> uiBpm{0.0};
     std::atomic<bool> uiPlaying{false};
     std::atomic<bool> panicRequested{false};
@@ -114,7 +133,8 @@ public:
 private:
     static juce::AudioProcessorValueTreeState::ParameterLayout createLayout();
     void syncEngineFromParams();
-    void configureUnit(maq::Unit& u) const;
+    void configureUnit(maq::Unit& u, int unit) const;
+    void configureProject(maq::Project& p) const;
     static BusesProperties makeBuses();
     void emit(const std::vector<maq::MidiMsg>& msgs, int samplePos, juce::MidiBuffer& out);
     void setParamValue(const juce::String& id, int value);
@@ -131,7 +151,21 @@ private:
         std::array<std::atomic<float>*, maq::kSteps> pot{};
         std::array<std::atomic<float>*, maq::kSteps> mute{};
     };
-    std::array<RowParams, maq::kRows> rp_;
+    std::array<std::array<RowParams, maq::kRows>, maq::kUnits> rp_;
+
+    struct UnitParams {
+        std::atomic<float>* active = nullptr;
+        std::atomic<float>* outMode = nullptr;
+        std::atomic<float>* outChan = nullptr;
+        std::atomic<float>* outOff = nullptr;
+    };
+    std::array<UnitParams, maq::kUnits> up_;
+    std::atomic<float>* chainKind_ = nullptr;
+    std::atomic<float>* chainLoop_ = nullptr;
+    std::atomic<float>* trOn_ = nullptr; std::atomic<float>* trSu_ = nullptr; std::atomic<float>* trSr_ = nullptr;
+    std::atomic<float>* trDu_ = nullptr; std::atomic<float>* trDr_ = nullptr;
+    std::atomic<float>* ctOn_ = nullptr; std::atomic<float>* ctSu_ = nullptr; std::atomic<float>* ctSr_ = nullptr;
+    std::atomic<float>* ctDu_ = nullptr;
 
     std::atomic<float>* followKey_ = nullptr;
     maq::CaptureBuffer capture_;
@@ -145,7 +179,7 @@ private:
     mutable juce::CriticalSection bankLock_;
     maq::Bank bank_;
 
-    maq::Unit unit_;
+    maq::Project project_;
     double sampleRate_ = 44100.0;
     bool wasPlaying_ = false;
     double nextClock_ = 0.0;      // prochaine horloge MIDI (24 par noire) à traiter

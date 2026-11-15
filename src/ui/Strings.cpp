@@ -75,6 +75,32 @@ const Pair kStrings[] = {
     {"Suivre Bitwig", "Follow Bitwig"},                                  // FollowKey
     {"Suivi de la tonalité : le plugin écoute les notes MIDI du canal 16 (la note jouée devient la fondamentale)", "Key following: the plugin listens to MIDI notes on channel 16 (the note played becomes the root)"},  // FollowKeyOn
     {"Suivi de la tonalité désactivé", "Key following off"},             // FollowKeyOff
+    {"Unités", "Units"},                                                 // UnitsLabel
+    {"Actif", "On"},                                                     // UnitActive
+    {"Canaux : par rangée", "Channels: per row"},                        // OutPerRow
+    {"Canal forcé", "Forced channel"},                                   // OutForced
+    {"Décalage de canal", "Channel offset"},                             // OutOffset
+    {"Chaînage : aucun", "Chain: off"},                                  // ChainNone
+    {"Série par rangée", "Series by row"},                               // ChainByRow
+    {"Série par unité", "Series by unit"},                               // ChainByUnit
+    {"Retour à A", "Loop to A"},                                         // ChainLoop
+    {"Liens...", "Links..."},                                            // LinksButton
+    {"Liens entre unités", "Links between units"},                       // LinksTitle
+    {"Transposition : la note d'une rangée devient la référence des rangées relatives (nr, Pr) d'une autre unité. Pilotage : une rangée Prg envoie ses Program Change à une autre unité, comme la télécommande.", "Transposition: a row's note becomes the reference of the relative rows (nr, Pr) of another unit. Control: a Prg row sends its Program Changes to another unit, like the remote control."},  // LinksNote
+    {"Désactivé", "Off"},                                                // LinkOff
+    {"Activé", "On"},                                                    // LinkOn
+    {"Transposition", "Transposition"},                                  // LinkTranspose
+    {"Pilotage", "Control"},                                             // LinkControl
+    {"source : unité", "source: unit"},                                  // LinkSrcUnit
+    {"source : rangée", "source: row"},                                  // LinkSrcRow
+    {"cible : unité", "target: unit"},                                   // LinkDstUnit
+    {"cible : rangée", "target: row"},                                   // LinkDstRow
+    {"toutes les rangées", "all rows"},                                  // LinkAllRows
+    {"OK", "OK"},                                                        // LinkOk
+    {"Annuler", "Cancel"},                                               // LinkCancel
+    {"Lien de pilotage refusé : il refermerait une boucle", "Control link refused: it would close a loop"},  // LinkRefused
+    {"Collision de canal {n} : unités {file}", "Channel clash {n}: units {file}"},  // CollisionText
+    {"Toutes les unités", "All units"},                                  // ScopeAllUnits
 };
 static_assert(sizeof(kStrings) / sizeof(kStrings[0]) == static_cast<std::size_t>(Str::Count),
               "la table de textes doit suivre l'énumération Str");

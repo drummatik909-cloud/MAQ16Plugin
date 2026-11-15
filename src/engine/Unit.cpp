@@ -43,7 +43,72 @@ int pitchBendFromPot(EventKind kind, int pot) {
     }
 }
 
-Unit::Unit() { resetStates(); }
+Unit::Unit() {
+    relativeBaseRow.fill(-1);
+    finished_.reserve(8);
+    resetStates();
+}
+
+int Unit::baseFor(int r) const { return relativeBaseRow[static_cast<size_t>(r)] >= 0 ? relativeBaseRow[static_cast<size_t>(r)] : relativeBase; }
+
+void Unit::setRelativeBase(int row, int note) {
+    note = clampi(note, 0, 127);
+    if (row < 0) relativeBaseRow.fill(note);
+    else if (row < kRows) relativeBaseRow[static_cast<size_t>(row)] = note;
+}
+
+bool Unit::isOnr(int r) const {
+    return rows[static_cast<size_t>(r)].mode == PlayMode::OneShotRetrigger && rows[static_cast<size_t>(r)].event.kind != EventKind::Off;
+}
+
+// Rangée Onr suivante (circulaire) ; la rangée elle-même s'il n'y en a pas d'autre ; -1 si aucune
+int Unit::nextOnrRow(int r) const {
+    for (int k = 1; k <= kRows; ++k) {
+        const int c = (r + k) % kRows;
+        if (isOnr(c)) return c;
+    }
+    return -1;
+}
+
+// Au départ, seule la première rangée Onr tourne : les autres attendent que la précédente les déclenche
+void Unit::applyOnrHead() {
+    if (!chainInsideUnit) return;
+    int head = -1;
+    for (int r = 0; r < kRows; ++r) {
+        if (!isOnr(r)) continue;
+        if (head < 0) head = r;
+        else st_[static_cast<size_t>(r)].running = false;
+    }
+}
+
+bool Unit::anyRowRunning() const {
+    for (int r = 0; r < kRows; ++r)
+        if (rows[static_cast<size_t>(r)].event.kind != EventKind::Off && st_[static_cast<size_t>(r)].running) return true;
+    return false;
+}
+
+void Unit::holdRow(int r) {
+    if (r >= 0 && r < kRows) st_[static_cast<size_t>(r)].running = false;
+}
+
+void Unit::triggerRow(int r, std::vector<MidiMsg>& out) {
+    if (!playing_ || r < 0 || r >= kRows || rows[static_cast<size_t>(r)].event.kind == EventKind::Off) return;
+    RowState& s = st_[static_cast<size_t>(r)];
+    s.t = 0; s.phase = 0; s.running = true;
+    fireRow(r, out);
+    s.phase = 1 % std::max(1, rows[static_cast<size_t>(r)].gate);
+}
+
+void Unit::triggerUnit(std::vector<MidiMsg>& out) {
+    if (!playing_) return;
+    for (int r = 0; r < kRows; ++r) {  // on garde la note en cours : son Note Off doit encore sortir
+        RowState& s = st_[static_cast<size_t>(r)];
+        s.t = 0; s.phase = 0; s.running = true; s.hasCurrent = false;
+    }
+    applyOnrHead();
+    for (int r = 0; r < kRows; ++r)
+        if (st_[static_cast<size_t>(r)].running) triggerRow(r, out);
+}
 
 uint32_t Unit::nextRandom(uint32_t& s) {
     if (s == 0) s = 1;
@@ -64,7 +129,7 @@ void Unit::resetStates() {
     }
 }
 
-void Unit::start() { resetStates(); playing_ = true; }
+void Unit::start() { resetStates(); applyOnrHead(); playing_ = true; }
 void Unit::continuePlaying() { playing_ = true; }
 
 void Unit::noteOffIfActive(int r, std::vector<MidiMsg>& out) {
@@ -124,7 +189,7 @@ void Unit::fireRow(int r, std::vector<MidiMsg>& out) {
     const RowConfig& cfg = rows[r];
     RowState& s = st_[r];
     const int idx = position(r);
-    if (idx < 0) { s.running = false; return; }
+    if (idx < 0) { s.running = false; finished_.push_back(r); return; }
     s.lastStep = idx;
     s.t++;
     const int pot = clampi(cfg.pot[idx - 1], 0, 127);
@@ -133,12 +198,12 @@ void Unit::fireRow(int r, std::vector<MidiMsg>& out) {
     const EventKind k = cfg.event.kind;
 
     if (k == EventKind::Velocity) { s.currentPot = pot; s.hasCurrent = true; return; }
-    if (muted) return;
+    if (muted || cfg.rowMute) return;
 
     if (isNoteKind(k)) {
         if (isPauseKind(k) && pot == 127) return;
         int note;
-        if (isRelativeKind(k)) note = clampi(relativeBase + noteOffsetFromPot(cfg.event.octaves, pot), 0, 127);
+        if (isRelativeKind(k)) note = clampi(baseFor(r) + noteOffsetFromPot(cfg.event.octaves, pot), 0, 127);
         else note = clampi(noteFromPot(cfg.event.octaves, pot), 0, 127);
         if (scaleMode == kScaleModeOutput) note = quantizeNote(note, scaleRoot, scaleType);
         int vel = 100;
@@ -175,6 +240,7 @@ void Unit::fireRow(int r, std::vector<MidiMsg>& out) {
 
 void Unit::tick(std::vector<MidiMsg>& out) {
     if (!playing_) return;
+    finished_.clear();
     // 1. fin des notes en cours
     for (int r = 0; r < kRows; ++r) {
         RowState& s = st_[r];
@@ -189,6 +255,21 @@ void Unit::tick(std::vector<MidiMsg>& out) {
             RowState& s = st_[r];
             if (s.phase == 0) fireRow(r, out);
             s.phase = (s.phase + 1) % std::max(1, rows[r].gate);
+        }
+    }
+    // 3. chaînage Onr entre les rangées de l'unité (sans allocation : au plus kRows rangées terminées)
+    if (chainInsideUnit) {
+        int done[kRows];
+        int nd = 0;
+        for (int f : finished_)
+            if (nd < kRows) done[nd++] = f;
+        for (int i = 0; i < nd; ++i) {
+            const int f = done[i];
+            if (!isOnr(f)) continue;
+            const int next = nextOnrRow(f);
+            if (next < 0) continue;
+            if (!wrapOnr && next <= f) continue;  // fin de la chaîne
+            triggerRow(next, out);
         }
     }
 }

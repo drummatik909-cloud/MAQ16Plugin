@@ -13,7 +13,7 @@ namespace maqui {
 
 constexpr int kWidth = 1369;    // taille de l'image de la façade
 constexpr int kHeight = 502;
-constexpr int kBarHeight = 184;  // barre de contrôle sous la façade (presets, état, apprentissage et gamme, export MIDI, aide)
+constexpr int kBarHeight = 222;  // barre de contrôle sous la façade (presets, état, apprentissage et gamme, export MIDI, unités, aide)
 constexpr int kTotalHeight = kHeight + kBarHeight;
 
 // Dessine le capuchon argenté des potards par-dessus celui de la photo.
@@ -80,6 +80,9 @@ public:
     void learnPause();
     void learnSkip();
 
+    // Unité réglée par la façade (A à D) : rebranche les 48 potards sur ses paramètres
+    void setUnit(int unit);
+
 private:
     enum class Menu { None, Event, Channel, FirstLast, Prescale, Mode, SingleStep, Preset };
 
@@ -91,6 +94,7 @@ private:
     void flash(const std::string& threeChars);
     void handleLearnNote(const MaqProcessor::NoteIn& n);
     void advanceLearn();
+    void attachKnobs();
     void setPotValue(int row, int step, int value);
     void setMuteValue(int row, int step, bool muted);
 
@@ -121,6 +125,7 @@ private:
 
     // État de l'interface (non sauvegardé)
     Menu menu_ = Menu::None;
+    int unit_ = 0;          // unité affichée (0 = A ... 3 = D)
     int row_ = 0;
     int sub_ = 0;           // 0..5 pour FIRST/LAST et PRESCALE (3 premiers : F ou g ; 3 suivants : L ou n)
     bool ccEdit_ = false;   // EVENT : DATA règle le numéro du contrôleur libre
@@ -154,6 +159,7 @@ public:
     void resized() override;
 
     void setHelpSource(std::function<maq::HelpContext()> source) { helpSource_ = std::move(source); }
+    void setUnitCallback(std::function<void(int)> onUnit) { onUnit_ = std::move(onUnit); }
     void setLearnCallbacks(std::function<void(bool)> onLearn, std::function<void()> onPause,
                            std::function<void()> onSkip) {
         onLearn_ = std::move(onLearn);
@@ -179,6 +185,11 @@ private:
     void fillLengthBox(bool resetSelection);
     void doExportMidi();
     juce::String midiFileName() const;
+    void selectUnit(int unit);
+    void fillUnitBoxes();
+    void fillOutValueBox();
+    void syncUnitControls();
+    void showLinksDialog();
     void setChoiceParam(const juce::String& id, int index);
 
     MaqProcessor& proc_;
@@ -193,6 +204,14 @@ private:
     juce::Label midiLabel_;
     MidiDragHandle dragHandle_;
     std::unique_ptr<juce::ButtonParameterAttachment> followAttach_;
+    juce::TextButton unitBtn_[maq::kUnits];
+    juce::TextButton activeBtn_, linksBtn_, loopBtn_;
+    juce::ComboBox outModeBox_, outValueBox_, chainBox_;
+    juce::Label unitsLabel_, collisionLabel_;
+    std::unique_ptr<juce::ButtonParameterAttachment> loopAttach_;
+    std::function<void(int)> onUnit_;
+    int shownOutKey_ = -1;
+    juce::String shownCollision_;
     juce::ComboBox rootBox_, typeBox_, modeBox_;
     juce::Label scaleLabel_;
     juce::ToggleButton keepSameBtn_;

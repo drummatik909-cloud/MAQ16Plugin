@@ -18,6 +18,9 @@ enum class Str {
     Learn, Pause, Skip, ScaleLabel, ScaleOff, ScaleLock, ScaleOutput, LearnOn, LearnOff,
     MidiLabel, SrcLoop, SrcCapture, Len1Loop, LenNLoops, LenCycle, LenBar, LenBars, ScopeAll, ScopeRow,
     ExportMidi, DragMidi, MidiExported, MidiFailed, MidiEmpty, ExportMidiTitle, FollowKey, FollowKeyOn, FollowKeyOff,
+    UnitsLabel, UnitActive, OutPerRow, OutForced, OutOffset, ChainNone, ChainByRow, ChainByUnit, ChainLoop,
+    LinksButton, LinksTitle, LinksNote, LinkOff, LinkOn, LinkTranspose, LinkControl, LinkSrcUnit, LinkSrcRow,
+    LinkDstUnit, LinkDstRow, LinkAllRows, LinkOk, LinkCancel, LinkRefused, CollisionText, ScopeAllUnits,
     Count
 };
 

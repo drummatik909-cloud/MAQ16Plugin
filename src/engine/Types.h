@@ -55,6 +55,7 @@ struct RowConfig {
     PlayMode mode = PlayMode::Forward;
     bool noteTriggered = false;  // modes déclenchés par notes : à faire
     int velocityTargets = 0;     // pour Velocity : masque des rangées concernées (bit r)
+    bool rowMute = false;        // rangée entière coupée (télécommande, Program Change 4)
     std::array<int, kSteps> pot{};     // position du potard 0..127
     std::array<bool, kSteps> mute{};   // pas muet
 };
@@ -66,6 +67,7 @@ struct MidiMsg {
     int data1;    // note / contrôleur / programme / pression ; PitchBend : valeur 14 bits
     int data2;    // vélocité / valeur
     int row;      // rangée d'origine (0..2), -1 si le message ne vient pas d'une rangée (Panic)
+    int unit = 0; // unité d'origine (0..3), renseignée par Project
 };
 
 // Conversions potard -> valeur (hypothèses documentées dans la spécification).
