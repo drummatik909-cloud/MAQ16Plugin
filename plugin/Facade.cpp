@@ -410,8 +410,8 @@ void Facade::bump(const String& id, int delta) {
 }
 
 maq::EventConfig Facade::eventOf(int row) const {
-    maq::EventConfig e = maq::eventForIndex(getInt(MaqProcessor::rowId("event", row, 0, unit_)));
-    if (e.kind == maq::EventKind::FreeCC) e.ccNumber = getInt(MaqProcessor::rowId("cc", row, 0, unit_));
+    maq::EventConfig e = maq::eventForIndex(getInt(MaqProcessor::rowId("event", row, unit_)));
+    if (e.kind == maq::EventKind::FreeCC) e.ccNumber = getInt(MaqProcessor::rowId("cc", row, unit_));
     return e;
 }
 
@@ -470,7 +470,7 @@ void Facade::pressMenuButton(int index) {
     }
 
     if (index == 6 && menu_ == Menu::Event) {  // PRESET dans EVENT : numéro du contrôleur libre
-        if (getInt(MaqProcessor::rowId("event", row_, 0, unit_)) == maq::kFreeCcEventIndex) ccEdit_ = !ccEdit_;
+        if (getInt(MaqProcessor::rowId("event", row_, unit_)) == maq::kFreeCcEventIndex) ccEdit_ = !ccEdit_;
         return;
     }
 
@@ -510,19 +510,19 @@ void Facade::pressMenuButton(int index) {
 void Facade::dataChanged(int delta) {
     switch (menu_) {
         case Menu::Event:
-            bump(MaqProcessor::rowId(ccEdit_ ? "cc" : "event", row_, 0, unit_), delta);
+            bump(MaqProcessor::rowId(ccEdit_ ? "cc" : "event", row_, unit_), delta);
             break;
         case Menu::Channel:
-            bump(MaqProcessor::rowId("chan", row_, 0, unit_), delta);
+            bump(MaqProcessor::rowId("chan", row_, unit_), delta);
             break;
         case Menu::FirstLast:
-            bump(MaqProcessor::rowId(sub_ < 3 ? "first" : "last", row_, 0, unit_), delta);
+            bump(MaqProcessor::rowId(sub_ < 3 ? "first" : "last", row_, unit_), delta);
             break;
         case Menu::Prescale:
-            bump(MaqProcessor::rowId(sub_ < 3 ? "gate" : "notelen", row_, 0, unit_), delta);
+            bump(MaqProcessor::rowId(sub_ < 3 ? "gate" : "notelen", row_, unit_), delta);
             break;
         case Menu::Mode:
-            bump(MaqProcessor::rowId("mode", row_, 0, unit_), delta);
+            bump(MaqProcessor::rowId("mode", row_, unit_), delta);
             break;
         case Menu::SingleStep:
             selStep_ = jlimit(0, maq::kSteps - 1, selStep_ + delta);
@@ -595,20 +595,20 @@ std::string Facade::computeDisplay() const {
             return bpm > 0.0 ? num3(static_cast<int>(std::lround(bpm))) : std::string("---");
         }
         case Menu::Event: {
-            const int ev = getInt(MaqProcessor::rowId("event", row_, 0, unit_));
-            if (ccEdit_ || ev == maq::kFreeCcEventIndex) return num3(getInt(MaqProcessor::rowId("cc", row_, 0, unit_)));
+            const int ev = getInt(MaqProcessor::rowId("event", row_, unit_));
+            if (ccEdit_ || ev == maq::kFreeCcEventIndex) return num3(getInt(MaqProcessor::rowId("cc", row_, unit_)));
             return pad(maq::eventLabel(ev));
         }
         case Menu::Channel:
-            return num3(getInt(MaqProcessor::rowId("chan", row_, 0, unit_)));
+            return num3(getInt(MaqProcessor::rowId("chan", row_, unit_)));
         case Menu::FirstLast:
-            return sub_ < 3 ? two('F', getInt(MaqProcessor::rowId("first", row_, 0, unit_)))
-                            : two('L', getInt(MaqProcessor::rowId("last", row_, 0, unit_)));
+            return sub_ < 3 ? two('F', getInt(MaqProcessor::rowId("first", row_, unit_)))
+                            : two('L', getInt(MaqProcessor::rowId("last", row_, unit_)));
         case Menu::Prescale:
-            return sub_ < 3 ? two('g', getInt(MaqProcessor::rowId("gate", row_, 0, unit_)))
-                            : two('n', getInt(MaqProcessor::rowId("notelen", row_, 0, unit_)));
+            return sub_ < 3 ? two('g', getInt(MaqProcessor::rowId("gate", row_, unit_)))
+                            : two('n', getInt(MaqProcessor::rowId("notelen", row_, unit_)));
         case Menu::Mode:
-            return std::string(maq::modeLabel(getInt(MaqProcessor::rowId("mode", row_, 0, unit_))));
+            return std::string(maq::modeLabel(getInt(MaqProcessor::rowId("mode", row_, unit_))));
         case Menu::SingleStep:
             if (singleRow_ >= 0) return knobSegText(singleRow_, selStep_);
             return num3(selStep_ + 1);
@@ -675,15 +675,15 @@ void Facade::setLearn(bool on) {
     if (on) {
         MaqProcessor::NoteIn dummy;
         while (proc_.popNote(dummy)) {}  // on oublie les notes jouées avant
-        learnStep_ = jlimit(0, maq::kSteps - 1, getInt(MaqProcessor::rowId("first", learnRow_, 0, unit_)) - 1);
+        learnStep_ = jlimit(0, maq::kSteps - 1, getInt(MaqProcessor::rowId("first", learnRow_, unit_)) - 1);
     }
     proc_.learnActive.store(on);
 }
 
 // Le curseur avance de First à Last, puis revient au premier pas
 void Facade::advanceLearn() {
-    int first = jlimit(0, maq::kSteps - 1, getInt(MaqProcessor::rowId("first", learnRow_, 0, unit_)) - 1);
-    int last = jlimit(0, maq::kSteps - 1, getInt(MaqProcessor::rowId("last", learnRow_, 0, unit_)) - 1);
+    int first = jlimit(0, maq::kSteps - 1, getInt(MaqProcessor::rowId("first", learnRow_, unit_)) - 1);
+    int last = jlimit(0, maq::kSteps - 1, getInt(MaqProcessor::rowId("last", learnRow_, unit_)) - 1);
     if (last < first) std::swap(first, last);
     if (learnStep_ < first || learnStep_ >= last) learnStep_ = first;
     else ++learnStep_;
@@ -737,8 +737,8 @@ maq::HelpContext Facade::helpContext() const {
         case Menu::Preset: c.menu = maq::HelpMenu::Preset; break;
         default: c.menu = maq::HelpMenu::None; break;
     }
-    c.eventIndex = getInt(MaqProcessor::rowId("event", row_, 0, unit_));
-    c.modeIndex = getInt(MaqProcessor::rowId("mode", row_, 0, unit_));
+    c.eventIndex = getInt(MaqProcessor::rowId("event", row_, unit_));
+    c.modeIndex = getInt(MaqProcessor::rowId("mode", row_, unit_));
     c.second = sub_ >= 3;
     c.ccEdit = ccEdit_;
     c.store = storeMode_;
