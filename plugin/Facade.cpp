@@ -882,6 +882,9 @@ ControlBar::ControlBar(MaqProcessor& p) : proc_(p) {
     if (auto* prm = proc_.apvts.getParameter("chainloop"))
         loopAttach_ = std::make_unique<ButtonParameterAttachment>(*prm, loopBtn_);
     linksBtn_.onClick = [this] { showLinksDialog(); };
+    guideBtn_.onClick = [this] { showUnitsGuide(); };
+    collisionLabel_.setFont(collisionLabel_.getFont().withHeight(13.0f));
+    addMouseListener(this, true);  // l'aide du réglage survolé s'affiche sur la ligne d'aide
     collisionLabel_.setColour(Label::textColourId, Colour(0xffff6a5a));
 
     langBtn_.onClick = [this] {
@@ -892,7 +895,7 @@ ControlBar::ControlBar(MaqProcessor& p) : proc_(p) {
 
     for (auto* b : {&notesBtn_, &frBtn_, &prevBtn_, &nextBtn_, &storeBtn_, &recallBtn_, &importBtn_, &exportBtn_,
                     &importDirBtn_, &exportDirBtn_, &panicBtn_, &manualBtn_, &langBtn_,
-                    &learnBtn_, &pauseBtn_, &skipBtn_, &followBtn_, &exportMidiBtn_, &activeBtn_, &linksBtn_,
+                    &learnBtn_, &pauseBtn_, &skipBtn_, &followBtn_, &exportMidiBtn_, &activeBtn_, &linksBtn_, &guideBtn_,
                     &loopBtn_, &unitBtn_[0], &unitBtn_[1], &unitBtn_[2], &unitBtn_[3]})
         addAndMakeVisible(*b);
     addAndMakeVisible(unitsLabel_);
@@ -951,6 +954,7 @@ void ControlBar::applyLanguage() {
     activeBtn_.setButtonText(S(maq::tr(maq::Str::UnitActive, l)));
     loopBtn_.setButtonText(S(maq::tr(maq::Str::ChainLoop, l)));
     linksBtn_.setButtonText(S(maq::tr(maq::Str::LinksButton, l)));
+    guideBtn_.setButtonText(S(maq::tr(maq::Str::GuideButton, l)));
     fillScaleBoxes();
     fillMidiBoxes();
     fillUnitBoxes();
@@ -1012,7 +1016,8 @@ void ControlBar::resized() {
     chainBox_.setBounds(640, 148, 170, 28);
     loopBtn_.setBounds(816, 148, 110, 28);
     linksBtn_.setBounds(936, 148, 100, 28);
-    collisionLabel_.setBounds(1044, 148, 306, 28);
+    guideBtn_.setBounds(1044, 148, 120, 28);
+    collisionLabel_.setBounds(832, 112, 518, 28);  // collisions de canal et conseils de chaînage (ligne MIDI)
     // Ligne 6 : aide contextuelle (deux lignes)
     helpLabel_.setBounds(20, 186, 1330, 34);
 }
@@ -1061,7 +1066,8 @@ void ControlBar::timerCallback() {
     syncUnitControls();
 
     if (helpSource_) {
-        const String help = S(maq::helpText(helpSource_(), lang()));
+        const String help = hoverHelp_ >= 0 ? S(maq::tr(static_cast<maq::Str>(hoverHelp_), lang()))
+                                            : S(maq::helpText(helpSource_(), lang()));
         if (help != shownHelp_) {
             shownHelp_ = help;
             helpLabel_.setText(help, dontSendNotification);
@@ -1238,20 +1244,71 @@ void ControlBar::syncUnitControls() {
     const int chain = value("chainkind");
     if (chainBox_.getSelectedId() != chain + 1) chainBox_.setSelectedId(chain + 1, dontSendNotification);
 
-    // Collisions de canal entre unités
+    // Collisions de canal entre unités (rouge) et conseils de chaînage (orange)
     String text;
-    const auto clashes = proc_.channelCollisions();
+    bool warning = false;
+    const maq::Project project = proc_.makeProjectSnapshot();
+    const auto clashes = project.collisions();
+    int badUnit = 0, badRow = 0;
     if (!clashes.empty()) {
         std::string letters;
         for (int i = 0; i < maq::kUnits; ++i)
             if (clashes[0].unitMask & (1 << i)) letters += (letters.empty() ? "" : ", ") + std::string(1, static_cast<char>('A' + i));
         text = S(maq::fmt(maq::Str::CollisionText, lang(), letters, clashes[0].channel));
         if (clashes.size() > 1) text += " (+" + String(static_cast<int>(clashes.size()) - 1) + ")";
+    } else if (project.chainProblem(badUnit, badRow)) {
+        text = S(maq::fmt(maq::Str::ChainHintMode, lang(), std::string(1, static_cast<char>('A' + badUnit)), badRow + 1));
+        warning = true;
+    } else if (project.chain.kind == maq::ChainKind::Series && project.activeMemberCount() < 2) {
+        text = S(maq::tr(maq::Str::ChainHintUnits, lang()));
+        warning = true;
     }
-    if (text != shownCollision_) {
-        shownCollision_ = text;
+    const String shown = String(warning ? "w" : "c") + text;
+    if (shown != shownCollision_) {
+        shownCollision_ = shown;
+        collisionLabel_.setColour(Label::textColourId, warning ? Colour(0xffffb347) : Colour(0xffff6a5a));
         collisionLabel_.setText(text, dontSendNotification);
     }
+}
+
+void ControlBar::mouseEnter(const MouseEvent& e) { hoverHelp_ = helpFor(e.originalComponent); }
+void ControlBar::mouseExit(const MouseEvent&) { hoverHelp_ = -1; }
+
+int ControlBar::helpFor(const Component* c) const {
+    for (; c != nullptr && c != this; c = c->getParentComponent()) {
+        for (int u = 0; u < maq::kUnits; ++u)
+            if (c == &unitBtn_[u]) return static_cast<int>(maq::Str::HelpUnitTab);
+        if (c == &unitsLabel_) return static_cast<int>(maq::Str::HelpUnitTab);
+        if (c == &activeBtn_) return static_cast<int>(maq::Str::HelpUnitActive);
+        if (c == &outModeBox_ || c == &outValueBox_) return static_cast<int>(maq::Str::HelpUnitChannels);
+        if (c == &chainBox_) return static_cast<int>(maq::Str::HelpChain);
+        if (c == &loopBtn_) return static_cast<int>(maq::Str::HelpChainLoop);
+        if (c == &linksBtn_) return static_cast<int>(maq::Str::HelpLinks);
+        if (c == &guideBtn_) return static_cast<int>(maq::Str::HelpGuideBtn);
+    }
+    return -1;
+}
+
+// Guide complet des unités, du chaînage, des canaux et des liens
+void ControlBar::showUnitsGuide() {
+    auto* text = new TextEditor();
+    text->setMultiLine(true, true);
+    text->setReadOnly(true);
+    text->setCaretVisible(false);
+    text->setScrollbarsShown(true);
+    text->setFont(Font(FontOptions(15.0f)));
+    text->setText(S(maq::tr(maq::Str::UnitsGuide, lang())), false);
+    text->setSize(740, 500);
+
+    DialogWindow::LaunchOptions options;
+    options.dialogTitle = S(maq::tr(maq::Str::GuideTitle, lang()));
+    options.content.setOwned(text);
+    options.componentToCentreAround = this;
+    options.dialogBackgroundColour = Colour(0xff202020);
+    options.escapeKeyTriggersCloseButton = true;
+    options.useNativeTitleBar = false;
+    options.resizable = true;
+    options.launchAsync();
 }
 
 // Fenêtre des liens entre unités : transposition et pilotage

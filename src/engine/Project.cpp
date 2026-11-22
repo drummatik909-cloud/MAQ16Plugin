@@ -22,22 +22,58 @@ int Project::outputChannel(const UnitOutput& o, int ch) {
     }
 }
 
+bool Project::canOverlap(int ua, int ra, int ub, int rb) const {
+    if (ua == ub) return false;
+    const bool chained = chain.kind == ChainKind::Series && chain.member[static_cast<size_t>(ua)] &&
+                         chain.member[static_cast<size_t>(ub)];
+    if (!chained) return true;
+    return chain.scope == ChainScope::PerRow && ra != rb;  // A1 et B2 peuvent jouer ensemble, pas A1 et B1
+}
+
 std::vector<ChannelCollision> Project::collisions() const {
-    int mask[16] = {};
+    struct Producer { int unit, row; };
+    std::vector<Producer> byChannel[16];
     for (int u = 0; u < kUnits; ++u) {
         if (!active[static_cast<size_t>(u)]) continue;
-        for (const auto& row : units[static_cast<size_t>(u)].rows) {
+        for (int r = 0; r < kRows; ++r) {
+            const RowConfig& row = units[static_cast<size_t>(u)].rows[static_cast<size_t>(r)];
             if (!producesOutput(row.event.kind)) continue;
             const int c = outputChannel(output[static_cast<size_t>(u)], clampi(row.channel, 1, 16) - 1);
-            mask[c] |= 1 << u;
+            byChannel[c].push_back({u, r});
         }
     }
     std::vector<ChannelCollision> result;
     for (int c = 0; c < 16; ++c) {
-        const int m = mask[c];
-        if (m & (m - 1)) result.push_back({c + 1, m});  // plus d'un bit : plusieurs unités sur ce canal
+        int mask = 0;
+        const auto& list = byChannel[c];
+        for (size_t i = 0; i < list.size(); ++i)
+            for (size_t j = i + 1; j < list.size(); ++j)
+                if (canOverlap(list[i].unit, list[i].row, list[j].unit, list[j].row))
+                    mask |= (1 << list[i].unit) | (1 << list[j].unit);
+        if (mask) result.push_back({c + 1, mask});
     }
     return result;
+}
+
+int Project::activeMemberCount() const {
+    std::array<int, kUnits> list{};
+    return memberList(list);
+}
+
+bool Project::chainProblem(int& unit, int& row) const {
+    if (chain.kind != ChainKind::Series || activeMemberCount() < 2) return false;
+    for (int u = 0; u < kUnits; ++u) {
+        if (!active[static_cast<size_t>(u)] || !chain.member[static_cast<size_t>(u)]) continue;
+        for (int r = 0; r < kRows; ++r) {
+            const RowConfig& rc = units[static_cast<size_t>(u)].rows[static_cast<size_t>(r)];
+            if (rc.event.kind == EventKind::Off) continue;
+            if (rc.mode != PlayMode::OneShotSingle && rc.mode != PlayMode::OneShotRetrigger) {
+                unit = u; row = r;
+                return true;
+            }
+        }
+    }
+    return false;
 }
 
 bool Project::isPlaying() const {

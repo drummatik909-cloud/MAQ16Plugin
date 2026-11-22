@@ -21,6 +21,8 @@ enum class Str {
     UnitsLabel, UnitActive, OutPerRow, OutForced, OutOffset, ChainNone, ChainByRow, ChainByUnit, ChainLoop,
     LinksButton, LinksTitle, LinksNote, LinkOff, LinkOn, LinkTranspose, LinkControl, LinkSrcUnit, LinkSrcRow,
     LinkDstUnit, LinkDstRow, LinkAllRows, LinkOk, LinkCancel, LinkRefused, CollisionText, ScopeAllUnits,
+    HelpUnitTab, HelpUnitActive, HelpUnitChannels, HelpChain, HelpChainLoop, HelpLinks, HelpGuideBtn,
+    GuideButton, GuideTitle, UnitsGuide, ChainHintMode, ChainHintUnits,
     Count
 };
 

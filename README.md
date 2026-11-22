@@ -1,3 +1,14 @@
+# Plugin MAQ 16/3 – lot 5c (aide des unités et du chaînage)
+
+- **Aide au survol** : en passant la souris sur les onglets A à D, « Actif », « Canaux », le chaînage, « Retour à A », « Liens... » ou « Aide unités », la ligne d'aide du bas explique le réglage.
+- **Bouton « Aide unités »** : ouvre le guide complet (unités, démarrage, chaînage par rangée et par unité, retour à A, choix des unités, canaux MIDI, liens) avec trois exemples. Français et anglais.
+- **Conseils orange** (ligne MIDI, à droite) : « active au moins deux unités » quand le chaînage est choisi avec une seule unité active, et « la rangée N de l'unité X n'est pas en OnS ou Onr » quand une rangée ne peut pas passer le relais.
+- **Collisions de canal** : ne signalent plus que les unités qui peuvent jouer en même temps. Des unités enchaînées ne comptent pas (par rangée : seules deux rangées de numéros différents peuvent se chevaucher).
+
+Fichiers modifiés : `plugin/Facade.h`, `plugin/Facade.cpp`, `src/engine/Project.h/.cpp`, `src/ui/Strings.h/.cpp`, `tests/test_main.cpp`, `README.md`. Tests du moteur : 4273 vérifications.
+
+---
+
 # Plugin MAQ 16/3 – étape 2b, lot 5b (4 unités A à D dans le plugin)
 
 **Ce qui change dans Bitwig** (cinquième ligne de la barre, sous l'export MIDI) :

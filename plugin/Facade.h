@@ -185,6 +185,10 @@ private:
     void fillLengthBox(bool resetSelection);
     void doExportMidi();
     juce::String midiFileName() const;
+    void mouseEnter(const juce::MouseEvent& e) override;
+    void mouseExit(const juce::MouseEvent& e) override;
+    int helpFor(const juce::Component* c) const;  // texte d'aide (Str) du réglage survolé, -1 si aucun
+    void showUnitsGuide();
     void selectUnit(int unit);
     void fillUnitBoxes();
     void fillOutValueBox();
@@ -205,12 +209,13 @@ private:
     MidiDragHandle dragHandle_;
     std::unique_ptr<juce::ButtonParameterAttachment> followAttach_;
     juce::TextButton unitBtn_[maq::kUnits];
-    juce::TextButton activeBtn_, linksBtn_, loopBtn_;
+    juce::TextButton activeBtn_, linksBtn_, loopBtn_, guideBtn_;
     juce::ComboBox outModeBox_, outValueBox_, chainBox_;
     juce::Label unitsLabel_, collisionLabel_;
     std::unique_ptr<juce::ButtonParameterAttachment> loopAttach_;
     std::function<void(int)> onUnit_;
     int shownOutKey_ = -1;
+    int hoverHelp_ = -1;  // aide du réglage survolé (valeur de maq::Str), -1 : aide de la façade
     juce::String shownCollision_;
     juce::ComboBox rootBox_, typeBox_, modeBox_;
     juce::Label scaleLabel_;

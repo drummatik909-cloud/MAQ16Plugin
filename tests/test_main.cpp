@@ -974,6 +974,46 @@ static void testProjectExport() {
     CHECK(h.ok && h.ntrks == 2 && h.tracks[1].name == "Row 1");
 }
 
+
+static void testChainAdvice() {
+    Project p;
+    p.active = {true, true, false, false};
+    onlyRow0(p.units[0], 1, PlayMode::Forward, 1, 16);
+    onlyRow0(p.units[1], 1, PlayMode::Forward, 1, 16);
+    int u = -1, r = -1;
+    CHECK(!p.chainProblem(u, r));                         // pas de chaînage : rien à signaler
+    p.chain.kind = ChainKind::Series;
+    CHECK(p.activeMemberCount() == 2);
+    CHECK(p.chainProblem(u, r) && u == 0 && r == 0);       // rangée en Forward : le relais ne viendra jamais
+    p.units[0].rows[0].mode = PlayMode::OneShotSingle;
+    CHECK(p.chainProblem(u, r) && u == 1 && r == 0);       // l'unité B pose le même problème
+    p.units[1].rows[0].mode = PlayMode::OneShotRetrigger;
+    CHECK(!p.chainProblem(u, r));
+    p.active = {true, false, false, false};                // une seule unité active : pas de chaîne
+    CHECK(p.activeMemberCount() == 1);
+    p.units[0].rows[0].mode = PlayMode::Forward;
+    CHECK(!p.chainProblem(u, r));
+
+    // collisions : les unités enchaînées ne jouent pas ensemble
+    Project q;
+    q.active = {true, true, true, false};
+    onlyRow0(q.units[0], 1, PlayMode::OneShotSingle, 1, 16);
+    onlyRow0(q.units[1], 1, PlayMode::OneShotSingle, 1, 16);
+    onlyRow0(q.units[2], 1, PlayMode::OneShotSingle, 1, 16);
+    CHECK(q.collisions().size() == 1 && q.collisions()[0].unitMask == 7);   // sans chaînage : collision
+    q.chain.kind = ChainKind::Series; q.chain.scope = ChainScope::WholeUnit;
+    CHECK(q.collisions().empty());                                          // enchaînées par unité : aucune
+    q.chain.scope = ChainScope::PerRow;
+    CHECK(q.collisions().empty());                                          // même rangée : elles alternent
+    q.units[1].rows[0].event.kind = EventKind::Off;
+    q.units[1].rows[1].event.kind = EventKind::NoteAbs; q.units[1].rows[1].channel = 1;   // B2 sur le canal 1
+    auto col = q.collisions();
+    CHECK(col.size() == 1 && col[0].unitMask == 7);                         // B2 peut jouer avec A1 et C1 : vraie collision
+    q.chain.member[1] = false;                                              // B hors de la chaîne : joue avec A
+    col = q.collisions();
+    CHECK(col.size() == 1 && (col[0].unitMask & 3) == 3);
+}
+
 static fs::path tempDir(const char* name) {
     fs::path d = fs::temp_directory_path() / name;
     std::error_code ec;
@@ -1108,6 +1148,7 @@ int main() {
     testSeriesChain();
     testLinks();
     testProjectExport();
+    testChainAdvice();
     std::printf("%d verifications, %d echec(s)\n", g_checks, g_fail);
     return g_fail == 0 ? 0 : 1;
 }

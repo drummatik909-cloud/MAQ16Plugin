@@ -75,8 +75,14 @@ public:
     int selectedRow(int unit) const { return selectedRow_[static_cast<size_t>(unit)]; }
 
     static int outputChannel(const UnitOutput& o, int channel0to15);
-    // Canaux utilisés par plusieurs unités (les rangées d'une même unité peuvent partager un canal)
+    // Canaux utilisés par plusieurs unités qui peuvent jouer en même temps. Les rangées d'une même unité peuvent
+    // partager un canal ; en chaînage, les unités enchaînées ne jouent pas ensemble (par rangée : seules deux
+    // rangées de numéros différents peuvent se chevaucher).
     std::vector<ChannelCollision> collisions() const;
+    // Chaînage en série impossible à faire avancer : une rangée utilisée qui n'est pas en OnS ou Onr ne finit jamais.
+    // Retourne true et la première rangée en cause (unité 0..3, rangée 0..2).
+    bool chainProblem(int& unit, int& row) const;
+    int activeMemberCount() const;
 
 private:
     std::array<int, kUnits> selectedRow_{};
@@ -90,6 +96,7 @@ private:
     void tag(size_t from, int unit);
     void flush(std::vector<MidiMsg>& out);
     bool wouldCycle(int index, const ControlLink& link) const;
+    bool canOverlap(int unitA, int rowA, int unitB, int rowB) const;
 };
 
 }  // namespace maq
